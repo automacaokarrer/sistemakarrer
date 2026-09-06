@@ -37,6 +37,7 @@
   },
   "vars": {
     "APP_NAME": "Karrer Atendimento",
-    "ENVIRONMENT": "production"
+    "ENVIRONMENT": "production",
+    "APP_BASE_URL": "https://karrer-atendimento.automacaokarrer.workers.dev"
   }
 }
