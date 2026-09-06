@@ -4,6 +4,9 @@ export interface SecretBindings {
   ZAPI_INSTANCE_TOKEN?: string;
   ZAPI_CLIENT_TOKEN?: string;
   ZAPI_WEBHOOK_TOKEN?: string;
+  RESEND_API_KEY?: string;
+  EMAIL_FROM?: string;
+  APP_BASE_URL?: string;
 }
 
 export interface AppEnv extends SecretBindings {
@@ -20,6 +23,14 @@ export interface SessionUser {
   name: string;
   email: string;
   role: "admin" | "manager" | "attendant";
+  permissions: Permissions;
+}
+
+export interface Permissions {
+  chat: boolean;
+  leads: boolean;
+  clients: boolean;
+  settings: boolean;
 }
 
 export interface ZApiPayload {

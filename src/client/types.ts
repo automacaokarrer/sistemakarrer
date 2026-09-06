@@ -5,6 +5,20 @@ export interface User {
   name: string;
   email: string;
   role: "admin" | "manager" | "attendant";
+  permissions: Permissions;
+}
+
+export interface Permissions {
+  chat: boolean;
+  leads: boolean;
+  clients: boolean;
+  settings: boolean;
+}
+
+export interface ManagedUser extends User {
+  active: boolean;
+  emailVerified: boolean;
+  createdAt: string;
 }
 
 export interface AuthStatus {

@@ -1,4 +1,4 @@
-import { authStatus, bootstrap, login, logout, requireUser } from "./auth";
+import { activateUser, authStatus, bootstrap, changePassword, login, logout, requireAnyPermission, requirePermission, requireUser, resetPassword } from "./auth";
 export { ChatRoom } from "./chat-room";
 import { HttpError, error, json, routeMatch } from "./http";
 import {
@@ -15,6 +15,7 @@ import {
 } from "./repository";
 import type { AppEnv } from "./types";
 import { handleZApiWebhook } from "./webhook";
+import { createUser, deleteUser, listUsers, sendPasswordReset, updateUserAccess } from "./settings";
 
 function withCookie(payload: unknown, cookie: string, status = 200): Response {
   return json(payload, { status, headers: { "Set-Cookie": cookie } });
@@ -40,32 +41,101 @@ async function routeApi(request: Request, env: AppEnv): Promise<Response> {
   if (method === "POST" && pathname === "/api/auth/logout") {
     return withCookie({ ok: true }, await logout(request, env));
   }
+  if (method === "POST" && pathname === "/api/auth/reset-password") {
+    await resetPassword(request, env);
+    return json({ ok: true });
+  }
+  if (method === "POST" && pathname === "/api/auth/activate") {
+    await activateUser(request, env);
+    return json({ ok: true });
+  }
 
   const webhook = routeMatch(pathname, /^\/api\/webhooks\/zapi\/([^/]+)$/);
   if (method === "POST" && webhook) return handleZApiWebhook(request, env, decodeURIComponent(webhook[1]));
 
   const user = await requireUser(request, env);
-  if (method === "GET" && pathname === "/api/conversations") return listConversations(env, url);
-  if (method === "GET" && pathname === "/api/leads/summary") return leadSummary(env);
-  if (method === "GET" && pathname === "/api/contacts") return listContacts(env);
-  if (method === "POST" && pathname === "/api/contacts") return createContact(request, env, user);
-  if (method === "POST" && pathname === "/api/media") return uploadMedia(request, env, user, url);
+  if (method === "POST" && pathname === "/api/settings/change-password") {
+    await changePassword(request, env, user);
+    return json({ ok: true });
+  }
+  if (method === "GET" && pathname === "/api/settings/users") {
+    requirePermission(user, "settings");
+    return listUsers(env);
+  }
+  if (method === "POST" && pathname === "/api/settings/users") {
+    requirePermission(user, "settings");
+    return createUser(request, env, user);
+  }
+  if (method === "GET" && pathname === "/api/conversations") {
+    requireAnyPermission(user, ["chat", "leads"]);
+    return listConversations(env, url);
+  }
+  if (method === "GET" && pathname === "/api/leads/summary") {
+    requirePermission(user, "leads");
+    return leadSummary(env);
+  }
+  if (method === "GET" && pathname === "/api/contacts") {
+    requirePermission(user, "clients");
+    return listContacts(env);
+  }
+  if (method === "POST" && pathname === "/api/contacts") {
+    requirePermission(user, "clients");
+    return createContact(request, env, user);
+  }
+  if (method === "POST" && pathname === "/api/media") {
+    requireAnyPermission(user, ["chat", "clients"]);
+    return uploadMedia(request, env, user, url);
+  }
 
   const media = routeMatch(pathname, /^\/api\/media\/(.+)$/);
-  if (method === "GET" && media) return getMedia(env, decodeURIComponent(media[1]));
+  if (method === "GET" && media) {
+    requireAnyPermission(user, ["chat", "clients"]);
+    return getMedia(env, decodeURIComponent(media[1]));
+  }
 
   const messages = routeMatch(pathname, /^\/api\/conversations\/([^/]+)\/messages$/);
-  if (messages && method === "GET") return listMessages(env, messages[1], url);
-  if (messages && method === "POST") return sendMessage(request, env, user, messages[1]);
+  if (messages && method === "GET") {
+    requireAnyPermission(user, ["chat", "leads"]);
+    return listMessages(env, messages[1], url);
+  }
+  if (messages && method === "POST") {
+    requirePermission(user, "chat");
+    return sendMessage(request, env, user, messages[1]);
+  }
 
   const websocket = routeMatch(pathname, /^\/api\/conversations\/([^/]+)\/ws$/);
-  if (method === "GET" && websocket) return env.CHAT_ROOMS.getByName(websocket[1]).fetch(request);
+  if (method === "GET" && websocket) {
+    requirePermission(user, "chat");
+    return env.CHAT_ROOMS.getByName(websocket[1]).fetch(request);
+  }
 
   const lead = routeMatch(pathname, /^\/api\/leads\/([^/]+)\/classification$/);
-  if (method === "PATCH" && lead) return updateClassification(request, env, user, lead[1]);
+  if (method === "PATCH" && lead) {
+    requirePermission(user, "leads");
+    return updateClassification(request, env, user, lead[1]);
+  }
 
   const notes = routeMatch(pathname, /^\/api\/conversations\/([^/]+)\/notes$/);
-  if (method === "POST" && notes) return addNote(request, env, user, notes[1]);
+  if (method === "POST" && notes) {
+    requirePermission(user, "leads");
+    return addNote(request, env, user, notes[1]);
+  }
+
+  const userAccess = routeMatch(pathname, /^\/api\/settings\/users\/([^/]+)\/access$/);
+  if (method === "PATCH" && userAccess) {
+    requirePermission(user, "settings");
+    return updateUserAccess(request, env, user, userAccess[1]);
+  }
+  const userReset = routeMatch(pathname, /^\/api\/settings\/users\/([^/]+)\/send-password-reset$/);
+  if (method === "POST" && userReset) {
+    requirePermission(user, "settings");
+    return sendPasswordReset(request, env, user, userReset[1]);
+  }
+  const managedUser = routeMatch(pathname, /^\/api\/settings\/users\/([^/]+)$/);
+  if (method === "DELETE" && managedUser) {
+    requirePermission(user, "settings");
+    return deleteUser(env, user, managedUser[1]);
+  }
 
   return error("Rota não encontrada.", 404);
 }

@@ -8,6 +8,8 @@ import {
   Image,
   LoaderCircle,
   LogOut,
+  KeyRound,
+  Mail,
   Menu,
   MessageCircle,
   Mic,
@@ -16,16 +18,23 @@ import {
   Plus,
   Search,
   Send,
+  Settings,
+  ShieldCheck,
+  Trash2,
+  UserPlus,
   Users,
+  X,
 } from "lucide-react";
 import { FormEvent, useCallback, useEffect, useRef, useState } from "react";
 import { api, formatTime, initials } from "./api";
-import type { AuthStatus, Classification, Contact, Conversation, LeadSummary, Message, User } from "./types";
+import type { AuthStatus, Classification, Contact, Conversation, LeadSummary, ManagedUser, Message, Permissions, User } from "./types";
 
-type View = "chat" | "leads" | "clients" | "lead";
+type View = "chat" | "leads" | "clients" | "lead" | "settings";
 type ConversationFilter = "all" | "unread" | "hot";
 
 const classificationLabel: Record<Classification, string> = { hot: "Quente", warm: "Morno", cold: "Frio" };
+const resetToken = new URLSearchParams(location.search).get("reset");
+const activationEmail = new URLSearchParams(location.search).get("activate");
 
 function App() {
   const [auth, setAuth] = useState<AuthStatus | null>(null);
@@ -42,6 +51,9 @@ function App() {
 
   useEffect(() => void loadAuth(), [loadAuth]);
 
+  if (resetToken) return <ResetPasswordScreen token={resetToken} />;
+  if (activationEmail) return <ActivateAccountScreen email={activationEmail} />;
+
   if (!auth) {
     return (
       <div className="splash">
@@ -55,6 +67,45 @@ function App() {
 
   if (!auth.user) return <AuthScreen setupRequired={auth.setupRequired} onAuthenticated={loadAuth} />;
   return <Dashboard user={auth.user} onLogout={() => setAuth({ setupRequired: false, user: null })} />;
+}
+
+function ActivateAccountScreen({ email }: { email: string }) {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const [done, setDone] = useState(false);
+  async function submit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const data = new FormData(event.currentTarget);
+    const password = String(data.get("password") ?? "");
+    if (password !== String(data.get("confirmation") ?? "")) { setError("As senhas não coincidem."); return; }
+    setBusy(true); setError("");
+    try {
+      await api("/api/auth/activate", { method: "POST", body: JSON.stringify({ email, code: data.get("code"), password }) });
+      setDone(true);
+    } catch (reason) { setError(reason instanceof Error ? reason.message : "Não foi possível confirmar o acesso."); }
+    finally { setBusy(false); }
+  }
+  if (done) return <main className="auth-page"><section className="auth-brand"><Brand /><p>Seu acesso foi confirmado com segurança.</p></section><div className="auth-card"><span className="eyebrow">Conta ativada</span><h1>Tudo pronto</h1><p>Sua senha foi criada. Você já pode entrar no sistema.</p><button className="primary wide" onClick={() => { history.replaceState({}, "", "/"); location.reload(); }}>Ir para o login</button></div></main>;
+  return <main className="auth-page"><section className="auth-brand"><Brand /><p>Confirme seu e-mail e escolha uma senha pessoal.</p></section><form className="auth-card" onSubmit={submit}><span className="eyebrow">Primeiro acesso</span><h1>Confirmar acesso</h1><p className="auth-helper">Enviamos um código para <strong>{email}</strong>.</p><Field label="Código de 6 dígitos" name="code" inputMode="numeric" pattern="[0-9]{6}" maxLength={6} autoComplete="one-time-code" required /><Field label="Criar senha" name="password" type="password" minLength={10} required /><Field label="Confirmar senha" name="confirmation" type="password" minLength={10} required />{error && <p className="form-error">{error}</p>}<button className="primary wide" disabled={busy}>{busy ? "Confirmando..." : "Confirmar e acessar"}</button></form></main>;
+}
+
+function ResetPasswordScreen({ token }: { token: string }) {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  async function submit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const data = new FormData(event.currentTarget);
+    const password = String(data.get("password") ?? "");
+    if (password !== String(data.get("confirmation") ?? "")) { setError("As senhas não coincidem."); return; }
+    setBusy(true); setError("");
+    try {
+      await api("/api/auth/reset-password", { method: "POST", body: JSON.stringify({ token, password }) });
+      history.replaceState({}, "", "/");
+      location.reload();
+    } catch (reason) { setError(reason instanceof Error ? reason.message : "Não foi possível redefinir a senha."); }
+    finally { setBusy(false); }
+  }
+  return <main className="auth-page"><section className="auth-brand"><Brand /><p>Crie uma nova senha para continuar com segurança.</p></section><form className="auth-card" onSubmit={submit}><span className="eyebrow">Recuperação de acesso</span><h1>Redefinir senha</h1><Field label="Nova senha" name="password" type="password" minLength={10} required /><Field label="Confirmar nova senha" name="confirmation" type="password" minLength={10} required />{error && <p className="form-error">{error}</p>}<button className="primary wide" disabled={busy}>{busy ? "Salvando..." : "Salvar nova senha"}</button></form></main>;
 }
 
 function AuthScreen({ setupRequired, onAuthenticated }: { setupRequired: boolean; onAuthenticated: () => Promise<void> }) {
@@ -101,12 +152,13 @@ function AuthScreen({ setupRequired, onAuthenticated }: { setupRequired: boolean
 }
 
 function Dashboard({ user, onLogout }: { user: User; onLogout: () => void }) {
-  const [view, setView] = useState<View>("chat");
+  const firstView: View = user.permissions.chat ? "chat" : user.permissions.leads ? "leads" : user.permissions.clients ? "clients" : "settings";
+  const [view, setView] = useState<View>(firstView);
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [contacts, setContacts] = useState<Contact[]>([]);
   const [summary, setSummary] = useState<LeadSummary>({ total: 0, hot: 0, warm: 0, cold: 0, averageFirstResponseMinutes: 0, daily: [] });
   const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(user.permissions.chat || user.permissions.leads);
 
   const reloadConversations = useCallback(async () => {
     setLoading(true);
@@ -136,7 +188,7 @@ function Dashboard({ user, onLogout }: { user: User; onLogout: () => void }) {
     await Promise.all([reloadConversations(), loadContacts()]);
   }, [loadContacts, reloadConversations]);
 
-  useEffect(() => void reloadConversations(), [reloadConversations]);
+  useEffect(() => { if (user.permissions.chat || user.permissions.leads) void reloadConversations(); }, [reloadConversations, user.permissions.chat, user.permissions.leads]);
   useEffect(() => {
     if (view === "leads" || view === "lead") void loadSummary();
     if (view === "clients") void loadContacts();
@@ -157,21 +209,23 @@ function Dashboard({ user, onLogout }: { user: User; onLogout: () => void }) {
       <Sidebar view={view} user={user} unread={conversations.reduce((sum, item) => sum + item.unreadCount, 0)} onNavigate={navigate} onLogout={logout} />
       <main className="workspace">
         {loading ? <div className="page-loader"><LoaderCircle className="spin" /> Carregando atendimento...</div> : null}
-        {view === "chat" && <ChatPage conversations={conversations} selected={selected} onSelect={setSelectedId} onOpenLead={() => setView("lead")} onRefresh={reloadConversations} />}
-        {view === "leads" && <LeadsPage conversations={conversations} summary={summary} onOpen={(id) => { setSelectedId(id); setView("lead"); }} onRefresh={refreshLeads} />}
-        {view === "lead" && <LeadDetail conversation={selected} onBack={() => setView("leads")} onChat={() => setView("chat")} onRefresh={refreshLeads} />}
-        {view === "clients" && <ClientsPage contacts={contacts} onRefresh={refreshClients} />}
+        {view === "chat" && user.permissions.chat && <ChatPage conversations={conversations} selected={selected} onSelect={setSelectedId} onOpenLead={() => setView("lead")} onRefresh={reloadConversations} />}
+        {view === "leads" && user.permissions.leads && <LeadsPage conversations={conversations} summary={summary} onOpen={(id) => { setSelectedId(id); setView("lead"); }} onRefresh={refreshLeads} />}
+        {view === "lead" && user.permissions.leads && <LeadDetail conversation={selected} onBack={() => setView("leads")} onChat={() => user.permissions.chat && setView("chat")} onRefresh={refreshLeads} />}
+        {view === "clients" && user.permissions.clients && <ClientsPage contacts={contacts} onRefresh={refreshClients} />}
+        {view === "settings" && user.permissions.settings && <SettingsPage currentUser={user} />}
       </main>
     </div>
   );
 }
 
 function Sidebar({ view, user, unread, onNavigate, onLogout }: { view: View; user: User; unread: number; onNavigate: (view: View) => void; onLogout: () => Promise<void> }) {
-  const items: Array<{ id: View; label: string; icon: typeof MessageCircle }> = [
-    { id: "chat", label: "Chat de atendimento", icon: MessageCircle },
-    { id: "leads", label: "Leads", icon: Users },
-    { id: "clients", label: "Cadastro de clientes", icon: Plus },
+  const allItems: Array<{ id: View; label: string; icon: typeof MessageCircle; allowed: boolean }> = [
+    { id: "chat", label: "Chat de atendimento", icon: MessageCircle, allowed: user.permissions.chat },
+    { id: "leads", label: "Leads", icon: Users, allowed: user.permissions.leads },
+    { id: "clients", label: "Cadastro de clientes", icon: Plus, allowed: user.permissions.clients },
   ];
+  const items = allItems.filter((item) => item.allowed);
   return (
     <aside className="sidebar">
       <div className="accent-line" />
@@ -185,6 +239,7 @@ function Sidebar({ view, user, unread, onNavigate, onLogout }: { view: View; use
             </button>
           ))}
         </nav>
+        {user.permissions.settings && <button className={`settings-nav ${view === "settings" ? "active" : ""}`} title="Configurações" aria-label="Configurações" onClick={() => onNavigate("settings")}><Settings size={19} /></button>}
         <div className="sidebar-user">
           <Avatar name={user.name} size="sm" />
           <span><strong>{user.name}</strong><small>Disponível</small></span>
@@ -367,6 +422,102 @@ function ClientsPage({ contacts, onRefresh }: { contacts: Contact[]; onRefresh: 
   return (
     <section className="page clients-page"><div className="page-heading"><div><h1>Cadastro de clientes</h1><p>O número de WhatsApp vincula o cadastro às conversas recebidas</p></div><SearchBox value={search} onChange={setSearch} placeholder="Buscar cliente" /></div><div className="clients-grid"><form className="card client-form" onSubmit={submit}><div className="form-title"><CircleUserRound size={32} /><div><h2>Novo cliente</h2><p>Campos com * são obrigatórios</p></div></div><span className="eyebrow">Dados pessoais</span><div className="form-grid"><Field label="Nome completo *" name="name" required /><Field label="WhatsApp *" name="phone" placeholder="5592999999999" required /><Field label="CPF *" name="cpf" placeholder="000.000.000-00" required /><Field label="RG · Órgão emissor" name="rg" /><Field label="Data de nascimento" name="birthDate" type="date" /><Field label="E-mail" name="email" type="email" /></div><span className="eyebrow">Endereço</span><div className="form-grid address"><Field label="Logradouro e número" name="addressLine" /><Field label="Cidade" name="city" /><Field label="UF" name="state" maxLength={2} /><Field label="CEP" name="postalCode" /></div><span className="eyebrow">Atendimento</span><div className="form-grid thirds"><Field label="Banco / Financeira" name="bank" /><label>Classificação inicial<select name="classification" defaultValue="warm"><option value="hot">Quente</option><option value="warm">Morno</option><option value="cold">Frio</option></select></label><Field label="CCB" name="ccb" /></div><label className="dropzone"><Paperclip /> <span>Documentos poderão ser anexados após salvar o cliente</span></label><div className="form-actions"><button type="reset" className="outline">Cancelar</button><button className="primary" disabled={busy}>{busy ? "Salvando..." : "Salvar cliente"}</button></div></form><aside className="card recent-card"><header><h2>Recentes</h2><span>{contacts.length} cadastrados</span></header>{visible.slice(0, 8).map((contact) => <div className="recent-person" key={contact.id}><Avatar name={contact.name} size="xs" /><span><strong>{contact.name ?? contact.phone}</strong><small>{contact.bank ?? "Sem banco informado"}</small></span><i /></div>)}{visible.length === 0 && <Empty text="Nenhum cliente encontrado." />}<div className="pending-box"><strong>{contacts.filter((item) => !item.profileComplete).length} contatos pendentes de cadastro</strong><span>Chegaram pelo WhatsApp sem ficha completa.</span></div></aside></div></section>
   );
+}
+
+type SettingsModal = { kind: "create" | "password" | "delete" | "email"; user?: ManagedUser } | null;
+const accessLabels: Array<{ key: keyof Permissions; label: string }> = [
+  { key: "chat", label: "Chat" }, { key: "leads", label: "Leads" }, { key: "clients", label: "Clientes" }, { key: "settings", label: "Configurações" },
+];
+
+function SettingsPage({ currentUser }: { currentUser: User }) {
+  const [users, setUsers] = useState<ManagedUser[]>([]);
+  const [modal, setModal] = useState<SettingsModal>(null);
+  const [busy, setBusy] = useState(false);
+  const [notice, setNotice] = useState("");
+  const [error, setError] = useState("");
+
+  const loadUsers = useCallback(async () => {
+    const data = await api<{ users: ManagedUser[] }>("/api/settings/users");
+    setUsers(data.users);
+  }, []);
+  useEffect(() => void loadUsers(), [loadUsers]);
+
+  function open(next: SettingsModal) { setError(""); setNotice(""); setModal(next); }
+  async function updateAccess(user: ManagedUser, patch: { active?: boolean; permission?: keyof Permissions }) {
+    if (user.role === "admin") return;
+    const next = { ...user, active: patch.active ?? user.active, permissions: { ...user.permissions } };
+    if (patch.permission) next.permissions[patch.permission] = !next.permissions[patch.permission];
+    setUsers((current) => current.map((item) => item.id === user.id ? next : item));
+    try {
+      await api(`/api/settings/users/${user.id}/access`, { method: "PATCH", body: JSON.stringify({ active: next.active, permissions: next.permissions }) });
+      setNotice("Acessos atualizados no banco.");
+    } catch (reason) { await loadUsers(); setError(reason instanceof Error ? reason.message : "Não foi possível atualizar os acessos."); }
+  }
+
+  async function create(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault(); setBusy(true); setError("");
+    const data = new FormData(event.currentTarget);
+    const permissions = Object.fromEntries(accessLabels.map(({ key }) => [key, data.get(key) === "on"]));
+    try {
+      await api("/api/settings/users", { method: "POST", body: JSON.stringify({ name: data.get("name"), email: data.get("email"), permissions }) });
+      await loadUsers(); setModal(null); setNotice("Convite enviado. O usuário deve confirmar o e-mail e criar a própria senha.");
+    } catch (reason) { setError(reason instanceof Error ? reason.message : "Não foi possível criar o usuário."); }
+    finally { setBusy(false); }
+  }
+
+  async function changeOwnPassword(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault(); setBusy(true); setError("");
+    const data = new FormData(event.currentTarget);
+    if (data.get("newPassword") !== data.get("confirmation")) { setError("As senhas não coincidem."); setBusy(false); return; }
+    try {
+      await api("/api/settings/change-password", { method: "POST", body: JSON.stringify({ currentPassword: data.get("currentPassword"), newPassword: data.get("newPassword") }) });
+      setModal(null); setNotice("Sua senha foi alterada com segurança.");
+    } catch (reason) { setError(reason instanceof Error ? reason.message : "Não foi possível alterar a senha."); }
+    finally { setBusy(false); }
+  }
+
+  async function removeUser() {
+    if (!modal?.user) return; setBusy(true); setError("");
+    try { await api(`/api/settings/users/${modal.user.id}`, { method: "DELETE" }); await loadUsers(); setModal(null); setNotice("Usuário excluído."); }
+    catch (reason) { setError(reason instanceof Error ? reason.message : "Não foi possível excluir o usuário."); }
+    finally { setBusy(false); }
+  }
+
+  async function emailReset() {
+    if (!modal?.user) return; setBusy(true); setError("");
+    try { await api(`/api/settings/users/${modal.user.id}/send-password-reset`, { method: "POST" }); setModal(null); setNotice("Link de redefinição enviado por e-mail."); }
+    catch (reason) { setError(reason instanceof Error ? reason.message : "Não foi possível enviar o e-mail."); }
+    finally { setBusy(false); }
+  }
+
+  return <section className="page settings-page">
+    <div className="page-heading settings-heading"><div><span className="eyebrow">Administração</span><h1>Configurações</h1><p>Gerencie segurança, usuários e acessos por área.</p></div><button className="primary" onClick={() => open({ kind: "create" })}><UserPlus size={17} /> Novo usuário</button></div>
+    {notice && <div className="notice success">{notice}</div>}{error && !modal && <div className="notice error">{error}</div>}
+    <div className="settings-overview">
+      <div className="card security-card"><div className="settings-icon"><ShieldCheck /></div><div><span className="eyebrow">Minha conta</span><h2>{currentUser.name}</h2><p>{currentUser.email} · {currentUser.role === "admin" ? "Administrador mestre" : "Acesso administrativo"}</p></div><button className="outline" onClick={() => open({ kind: "password" })}><KeyRound size={16} /> Alterar minha senha</button></div>
+      <div className="card access-summary"><span className="eyebrow">Equipe</span><strong>{users.filter((user) => user.active).length}</strong><p>usuários ativos</p><small>{users.length} contas cadastradas</small></div>
+    </div>
+    <div className="card users-card"><div className="users-card-head"><div><h2>Usuários e permissões</h2><p>Os toggles são aplicados imediatamente no banco e validados pela API.</p></div></div>
+      <div className="users-table users-table-head"><span>Usuário</span><span>Status</span>{accessLabels.map(({ key, label }) => <span key={key}>{label}</span>)}<span>Ações</span></div>
+      {users.map((user) => <div className={`users-table ${user.active ? "" : "disabled-user"}`} key={user.id}><div className="managed-person"><Avatar name={user.name} size="sm" /><span><strong>{user.name}{user.id === currentUser.id && <em>Você</em>}{!user.emailVerified && <em className="pending-verification">Convite pendente</em>}</strong><small>{user.email}</small></span></div><div><Toggle checked={user.active} disabled={user.role === "admin"} label="Usuário ativo" onChange={(checked) => void updateAccess(user, { active: checked })} /></div>{accessLabels.map(({ key }) => <div key={key}><Toggle checked={user.permissions[key]} disabled={user.role === "admin" || !user.active} label={`Acesso a ${key}`} onChange={() => void updateAccess(user, { permission: key })} /></div>)}<div className="user-actions"><button title="Enviar redefinição de senha" disabled={!user.emailVerified} onClick={() => open({ kind: "email", user })}><Mail size={16} /></button><button className="danger-icon" title="Excluir usuário" disabled={user.role === "admin" || user.id === currentUser.id} onClick={() => open({ kind: "delete", user })}><Trash2 size={16} /></button></div></div>)}
+      {!users.length && <Empty text="Nenhum usuário cadastrado." />}
+    </div>
+
+    {modal?.kind === "create" && <Modal title="Convidar novo usuário" subtitle="Ele receberá um código de confirmação e criará a própria senha." onClose={() => setModal(null)}><form className="modal-form" onSubmit={create}><Field label="Nome completo" name="name" required /><Field label="E-mail profissional" name="email" type="email" required /><fieldset><legend>Acessos liberados</legend>{accessLabels.map(({ key, label }, index) => <label className="permission-option" key={key}><span><strong>{label}</strong><small>{key === "settings" ? "Gerenciar equipe e segurança" : `Visualizar e operar ${label.toLowerCase()}`}</small></span><Toggle name={key} defaultChecked={index < 2} label={label} /></label>)}</fieldset>{error && <p className="form-error">{error}</p>}<div className="modal-actions"><button type="button" className="outline" onClick={() => setModal(null)}>Cancelar</button><button className="primary" disabled={busy}>{busy ? "Enviando convite..." : "Enviar convite"}</button></div></form></Modal>}
+    {modal?.kind === "password" && <Modal title="Alterar minha senha" subtitle="As outras sessões abertas serão encerradas." onClose={() => setModal(null)}><form className="modal-form" onSubmit={changeOwnPassword}><Field label="Senha atual" name="currentPassword" type="password" required /><Field label="Nova senha" name="newPassword" type="password" minLength={10} required /><Field label="Confirmar nova senha" name="confirmation" type="password" minLength={10} required />{error && <p className="form-error">{error}</p>}<div className="modal-actions"><button type="button" className="outline" onClick={() => setModal(null)}>Cancelar</button><button className="primary" disabled={busy}>{busy ? "Salvando..." : "Alterar senha"}</button></div></form></Modal>}
+    {modal?.kind === "delete" && modal.user && <Modal title="Excluir usuário?" subtitle={`O acesso de ${modal.user.name} será removido permanentemente.`} tone="danger" onClose={() => setModal(null)}>{error && <p className="form-error">{error}</p>}<div className="modal-actions"><button className="outline" onClick={() => setModal(null)}>Cancelar</button><button className="danger-button" disabled={busy} onClick={() => void removeUser()}>{busy ? "Excluindo..." : "Excluir usuário"}</button></div></Modal>}
+    {modal?.kind === "email" && modal.user && <Modal title="Enviar redefinição?" subtitle={`Enviaremos um link seguro para ${modal.user.email}. O link expira em 30 minutos.`} onClose={() => setModal(null)}>{error && <p className="form-error">{error}</p>}<div className="modal-actions"><button className="outline" onClick={() => setModal(null)}>Cancelar</button><button className="primary" disabled={busy} onClick={() => void emailReset()}>{busy ? "Enviando..." : "Enviar e-mail"}</button></div></Modal>}
+  </section>;
+}
+
+function Toggle({ checked, defaultChecked, disabled, label, name, onChange }: { checked?: boolean; defaultChecked?: boolean; disabled?: boolean; label: string; name?: string; onChange?: (checked: boolean) => void }) {
+  const state = checked === undefined ? { defaultChecked } : { checked };
+  return <label className="toggle" title={label}><input type="checkbox" name={name} {...state} disabled={disabled} onChange={(event) => onChange?.(event.target.checked)} /><span /></label>;
+}
+
+function Modal({ title, subtitle, tone, onClose, children }: { title: string; subtitle: string; tone?: "danger"; onClose: () => void; children: React.ReactNode }) {
+  useEffect(() => { const close = (event: KeyboardEvent) => event.key === "Escape" && onClose(); addEventListener("keydown", close); return () => removeEventListener("keydown", close); }, [onClose]);
+  return <div className="modal-backdrop" role="presentation" onMouseDown={(event) => event.target === event.currentTarget && onClose()}><section className={`modal-card ${tone ?? ""}`} role="dialog" aria-modal="true" aria-label={title}><button className="modal-close" onClick={onClose} aria-label="Fechar"><X size={18} /></button><div className="modal-mark">{tone === "danger" ? <Trash2 /> : <ShieldCheck />}</div><h2>{title}</h2><p>{subtitle}</p>{children}</section></div>;
 }
 
 function ConversationRow({ conversation, active, onClick }: { conversation: Conversation; active: boolean; onClick: () => void }) { return <button className={`conversation-row ${active ? "active" : ""}`} onClick={onClick}><Avatar name={conversation.name} online={conversation.online} size="sm" /><span><strong>{conversation.name}</strong><small>{conversation.lastMessageType === "audio" ? "Áudio" : conversation.lastMessage ?? conversation.stage}</small></span><time>{formatTime(conversation.lastMessageAt)}{conversation.unreadCount > 0 && <b>{conversation.unreadCount}</b>}</time></button>; }

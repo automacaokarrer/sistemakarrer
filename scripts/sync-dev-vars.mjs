@@ -6,6 +6,9 @@ const keys = [
   "ZAPI_INSTANCE_TOKEN",
   "ZAPI_CLIENT_TOKEN",
   "ZAPI_WEBHOOK_TOKEN",
+  "RESEND_API_KEY",
+  "EMAIL_FROM",
+  "APP_BASE_URL",
 ];
 
 const empty = process.argv.includes("--empty");
