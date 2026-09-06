@@ -238,12 +238,15 @@ function Sidebar({ view, user, unread, onNavigate, onLogout }: { view: View; use
               <Icon size={18} /><span>{label}</span>{id === "chat" && unread > 0 && <b>{unread}</b>}
             </button>
           ))}
+          {user.permissions.settings && <button className={`mobile-settings ${view === "settings" ? "active" : ""}`} onClick={() => onNavigate("settings")}><Settings size={18} /><span>Configurações</span></button>}
         </nav>
-        {user.permissions.settings && <button className={`settings-nav ${view === "settings" ? "active" : ""}`} title="Configurações" aria-label="Configurações" onClick={() => onNavigate("settings")}><Settings size={19} /></button>}
         <div className="sidebar-user">
           <Avatar name={user.name} size="sm" />
           <span><strong>{user.name}</strong><small>Disponível</small></span>
-          <button title="Sair" onClick={() => void onLogout()}><LogOut size={17} /></button>
+          <div className="sidebar-actions">
+            {user.permissions.settings && <button className={`settings-nav ${view === "settings" ? "active" : ""}`} title="Configurações" aria-label="Configurações" onClick={() => onNavigate("settings")}><Settings size={18} /></button>}
+            <button className="logout-button" title="Sair" aria-label="Sair" onClick={() => void onLogout()}><LogOut size={17} /></button>
+          </div>
         </div>
       </div>
     </aside>
@@ -269,10 +272,10 @@ function ChatPage({ conversations, selected, onSelect, onOpenLead, onRefresh }: 
         </div>
         <div className="conversation-scroll">
           {filtered.map((conversation) => <ConversationRow key={conversation.id} conversation={conversation} active={selected?.id === conversation.id} onClick={() => onSelect(conversation.id)} />)}
-          {filtered.length === 0 && <Empty text="Nenhuma conversa encontrada." />}
+          {filtered.length === 0 && <div className="conversation-empty"><span><MessageCircle size={19} /></span><strong>Nenhuma conversa</strong><p>{search || filter !== "all" ? "Tente alterar os filtros ou a busca." : "As novas conversas do WhatsApp aparecerão aqui."}</p></div>}
         </div>
       </div>
-      {selected ? <ConversationPanel conversation={selected} onBack={() => onSelect(null)} onOpenLead={onOpenLead} onRefresh={onRefresh} /> : <Empty text="Selecione uma conversa para começar." large />}
+      {selected ? <ConversationPanel conversation={selected} onBack={() => onSelect(null)} onOpenLead={onOpenLead} onRefresh={onRefresh} /> : <div className="chat-welcome"><div className="welcome-mark"><MessageCircle size={28} /></div><span className="eyebrow">Central de atendimento</span><h2>Suas conversas em um só lugar</h2><p>Selecione um contato ao lado para visualizar o histórico e continuar o atendimento.</p><div className="welcome-features"><span><CheckCheck size={16} /> Histórico organizado</span><span><Users size={16} /> Leads integrados</span><span><ShieldCheck size={16} /> Dados protegidos</span></div><small><i /> Aguardando novas mensagens</small></div>}
     </section>
   );
 }
