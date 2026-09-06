@@ -240,13 +240,13 @@ function Sidebar({ view, user, unread, onNavigate, onLogout }: { view: View; use
           ))}
           {user.permissions.settings && <button className={`mobile-settings ${view === "settings" ? "active" : ""}`} onClick={() => onNavigate("settings")}><Settings size={18} /><span>Configurações</span></button>}
         </nav>
-        <div className="sidebar-user">
-          <Avatar name={user.name} size="sm" />
-          <span><strong>{user.name}</strong><small>Disponível</small></span>
-          <div className="sidebar-actions">
-            {user.permissions.settings && <button className={`settings-nav ${view === "settings" ? "active" : ""}`} title="Configurações" aria-label="Configurações" onClick={() => onNavigate("settings")}><Settings size={18} /></button>}
+        <div className="sidebar-footer">
+          <div className="sidebar-user">
+            <Avatar name={user.name} size="sm" />
+            <span><strong>{user.name}</strong><small>Online <i /></small></span>
             <button className="logout-button" title="Sair" aria-label="Sair" onClick={() => void onLogout()}><LogOut size={17} /></button>
           </div>
+          {user.permissions.settings && <button className={`settings-nav ${view === "settings" ? "active" : ""}`} onClick={() => onNavigate("settings")}><span><Settings size={18} /></span><strong>Configurações</strong></button>}
         </div>
       </div>
     </aside>
@@ -524,7 +524,7 @@ function Modal({ title, subtitle, tone, onClose, children }: { title: string; su
 }
 
 function ConversationRow({ conversation, active, onClick }: { conversation: Conversation; active: boolean; onClick: () => void }) { return <button className={`conversation-row ${active ? "active" : ""}`} onClick={onClick}><Avatar name={conversation.name} online={conversation.online} size="sm" /><span><strong>{conversation.name}</strong><small>{conversation.lastMessageType === "audio" ? "Áudio" : conversation.lastMessage ?? conversation.stage}</small></span><time>{formatTime(conversation.lastMessageAt)}{conversation.unreadCount > 0 && <b>{conversation.unreadCount}</b>}</time></button>; }
-function Brand() { return <div className="brand">Karrer<span> &amp;</span><br />Advogados</div>; }
+function Brand() { return <div className="brand"><span className="brand-main">Karrer<i>&amp;</i></span><span className="brand-sub">Advogados</span></div>; }
 function Avatar({ name, online, size = "md" }: { name: string | null; online?: boolean; size?: "xs" | "sm" | "md" }) { return <div className={`avatar ${size}`}>{initials(name)}{online && <i />}</div>; }
 function ClassificationBadge({ value }: { value: Classification }) { return <span className={`badge ${value}`}>Lead {classificationLabel[value].toLowerCase()}</span>; }
 function SearchBox({ value, onChange, placeholder }: { value: string; onChange: (value: string) => void; placeholder: string }) { return <label className="search-box"><Search size={16} /><input value={value} onChange={(event) => onChange(event.target.value)} placeholder={placeholder} /></label>; }

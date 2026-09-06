@@ -4,6 +4,10 @@
 }
 
 button, input, select, textarea { transition: border-color .18s ease, box-shadow .18s ease, background .18s ease, color .18s ease, transform .18s ease; }
+.auth-brand .brand, .splash .brand { display: grid; justify-items: start; }
+.auth-brand .brand-main, .splash .brand-main { color: #fff; font: 500 54px/.82 "Cormorant Garamond", Georgia, serif; }
+.auth-brand .brand-main i, .splash .brand-main i { color: #a59e8f; font-style: normal; }
+.auth-brand .brand-sub, .splash .brand-sub { margin-top: 10px; color: #d2b784; font: 600 12px/1 "IBM Plex Sans", sans-serif; letter-spacing: 7px; text-transform: uppercase; }
 button:not(:disabled):active { transform: translateY(1px); }
 input:focus, select:focus, textarea:focus { border-color: #9b805e !important; box-shadow: var(--focus-ring); outline: 0; }
 .card { border-color: rgb(124 101 76 / 15%); box-shadow: 0 8px 28px rgb(35 29 24 / 4%); }
@@ -11,19 +15,36 @@ input:focus, select:focus, textarea:focus { border-color: #9b805e !important; bo
 .primary:hover { box-shadow: 0 10px 24px rgb(42 38 34 / 20%); transform: translateY(-1px); }
 .outline:hover { background: #f7f3ed; border-color: #b9a48a; }
 
-.sidebar { box-shadow: 12px 0 40px rgb(0 0 0 / 8%); }
-.sidebar-inner { display: flex; flex-direction: column; min-height: 100%; }
-.sidebar nav { display: grid; gap: 7px; }
-.sidebar nav button { position: relative; border: 1px solid transparent; }
-.sidebar nav button:hover { background: rgb(255 255 255 / 7%); border-color: rgb(255 255 255 / 7%); }
-.sidebar nav button.active::before { position: absolute; left: -1px; width: 3px; height: 24px; border-radius: 0 4px 4px 0; background: #c9ad87; content: ""; }
+.sidebar { background: #292929; box-shadow: 12px 0 40px rgb(0 0 0 / 8%); }
+.sidebar .accent-line { width: 5px; background: #d2cabd; }
+.sidebar-inner { display: flex; flex-direction: column; min-height: 100%; padding: 36px 21px 20px; }
+.sidebar .brand { display: grid; justify-items: center; margin: 4px 0 18px; color: #fff; font-weight: 500; text-align: center; }
+.sidebar .brand-main { font: 500 33px/.82 "Cormorant Garamond", Georgia, serif; letter-spacing: -.8px; }
+.sidebar .brand-main i { color: #c79735; font-style: normal; }
+.sidebar .brand-sub { margin-top: 8px; color: #d5a644; font: 700 10px/1 "IBM Plex Sans", sans-serif; letter-spacing: 6px; text-transform: uppercase; transform: translateX(3px); }
+.sidebar-label { margin: 0 0 27px; color: #d1ccc4; font-size: 8px; letter-spacing: .2px; text-align: center; }
+.sidebar nav { display: grid; gap: 8px; }
+.sidebar nav button { position: relative; min-height: 37px; justify-content: center; padding: 7px 12px; border: 1px solid #d4d4d4; border-radius: 6px; background: #dedede; color: #282828; font-size: 11px; font-weight: 500; text-align: center; }
+.sidebar nav button svg { display: none; }
+.sidebar nav button:hover, .sidebar nav button.active { border-color: #eee; background: #eeeeee; color: #1f1f1f; }
+.sidebar nav button::before { position: absolute; left: -1px; width: 4px; height: 22px; border-radius: 0 4px 4px 0; background: #d4a537; content: ""; }
+.sidebar nav button.active { box-shadow: 0 5px 16px rgb(0 0 0 / 14%); }
+.sidebar nav b { position: absolute; right: 8px; }
 .mobile-settings { display: none !important; }
-.sidebar-actions { display: flex; align-items: center; gap: 3px; margin-left: auto; }
-.sidebar-actions button { display: grid; place-items: center; width: 34px; height: 34px; margin: 0; padding: 0; border: 1px solid transparent; border-radius: 9px; background: transparent; color: #8a847a; cursor: pointer; }
-.settings-nav { border-color: rgb(255 255 255 / 10%) !important; background: rgb(255 255 255 / 4%) !important; color: #bdb6ad !important; }
-.settings-nav:hover, .settings-nav.active { border-color: rgb(201 173 135 / 45%) !important; background: rgb(201 173 135 / 14%) !important; color: #f0dfc7 !important; }
-.settings-nav.active { box-shadow: inset 0 0 0 1px rgb(201 173 135 / 12%); }
-.sidebar-actions .logout-button:hover { background: rgb(255 255 255 / 7%); color: #ddd4c8; }
+.sidebar-footer { display: grid; gap: 8px; margin-top: auto; padding-top: 20px; border-top: 1px solid #777; }
+.sidebar-user { min-height: 45px; margin: 0; padding: 0; gap: 9px; overflow: hidden; border: 1px solid #d4a537; border-radius: 9px; background: #292929; }
+.sidebar-user .avatar { width: 48px; height: 43px; border-radius: 8px 0 0 8px; background: #e6e6e6; color: #343434; font-size: 16px; }
+.sidebar-user > span { gap: 1px; }
+.sidebar-user strong { max-width: 76px; color: #fff; font-size: 9px; }
+.sidebar-user small { display: flex; align-items: center; gap: 4px; color: #ddd; font-size: 8px; }
+.sidebar-user small i { width: 5px; height: 5px; border-radius: 50%; background: #71bd70; }
+.sidebar-user .logout-button { display: grid; place-items: center; width: 28px; height: 34px; margin-left: auto; padding: 0; border: 0; background: transparent; color: #e7e2d9; }
+.sidebar-user .logout-button:hover { color: #d4a537; }
+.settings-nav { display: flex; align-items: center; width: 100%; height: 34px; padding: 0; overflow: hidden; border: 1px solid #d4a537; border-radius: 8px; background: #292929; color: #fff; text-align: left; }
+.settings-nav > span { display: grid; place-items: center; width: 48px; height: 100%; border-radius: 7px 0 0 7px; background: #e6e6e6; color: #444; }
+.settings-nav strong { padding-left: 10px; font-size: 9px; font-weight: 500; }
+.settings-nav:hover, .settings-nav.active { background: #34312c; color: #fff; }
+.settings-nav.active { box-shadow: inset 3px 0 #d4a537; }
 
 .conversation-list { background: #f7f4ef; }
 .conversation-list > header { padding: 28px 20px 16px; }
@@ -130,15 +151,23 @@ input:focus, select:focus, textarea:focus { border-color: #9b805e !important; bo
 }
 
 @media (min-width: 768px) and (max-width: 1100px) {
-  .sidebar-user > .avatar { display: none; }
-  .sidebar-user { justify-content: center; }
-  .sidebar-actions { margin: 0; }
-  .sidebar-actions .logout-button { display: none; }
+  .sidebar-inner { padding-inline: 9px; }
+  .sidebar .brand-main { font-size: 18px; }
+  .sidebar .brand-sub { font-size: 6px; letter-spacing: 2px; }
+  .sidebar-footer { border: 0; }
+  .sidebar-user { display: none; }
+  .settings-nav { justify-content: center; width: 42px; margin-inline: auto; border-color: #d4a537; }
+  .settings-nav > span { width: 40px; border-radius: 7px; }
+  .settings-nav strong { display: none; }
 }
 
 @media (max-width: 767px) {
   .sidebar nav:has(.mobile-settings) { grid-template-columns: repeat(4, 1fr); }
   .mobile-settings { display: flex !important; }
+  .sidebar nav button { min-height: 66px; border: 0; border-radius: 0; background: transparent; color: #d8d2c5; box-shadow: none; }
+  .sidebar nav button:hover, .sidebar nav button.active { border: 0; background: #2b2b2b; color: #fff; box-shadow: inset 0 3px #d4a537; }
+  .sidebar nav button::before { display: none; }
+  .sidebar nav button svg { display: block; }
   .chat-welcome { min-height: calc(100vh - 66px); padding: 28px; }
   .chat-welcome h2 { font-size: 29px; }
   .welcome-features { display: grid; }
