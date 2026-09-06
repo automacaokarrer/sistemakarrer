@@ -4,10 +4,8 @@
 }
 
 button, input, select, textarea { transition: border-color .18s ease, box-shadow .18s ease, background .18s ease, color .18s ease, transform .18s ease; }
-.auth-brand .brand, .splash .brand { display: grid; justify-items: start; }
-.auth-brand .brand-main, .splash .brand-main { color: #fff; font: 500 54px/.82 "Cormorant Garamond", Georgia, serif; }
-.auth-brand .brand-main i, .splash .brand-main i { color: #a59e8f; font-style: normal; }
-.auth-brand .brand-sub, .splash .brand-sub { margin-top: 10px; color: #d2b784; font: 600 12px/1 "IBM Plex Sans", sans-serif; letter-spacing: 7px; text-transform: uppercase; }
+.brand img { display: block; width: 100%; height: auto; }
+.auth-brand .brand, .splash .brand { width: min(440px, 76vw); }
 button:not(:disabled):active { transform: translateY(1px); }
 input:focus, select:focus, textarea:focus { border-color: #9b805e !important; box-shadow: var(--focus-ring); outline: 0; }
 .card { border-color: rgb(124 101 76 / 15%); box-shadow: 0 8px 28px rgb(35 29 24 / 4%); }
@@ -18,10 +16,7 @@ input:focus, select:focus, textarea:focus { border-color: #9b805e !important; bo
 .sidebar { background: #292929; box-shadow: 12px 0 40px rgb(0 0 0 / 8%); }
 .sidebar .accent-line { width: 5px; background: #d2cabd; }
 .sidebar-inner { display: flex; flex-direction: column; min-height: 100%; padding: 36px 21px 20px; }
-.sidebar .brand { display: grid; justify-items: center; margin: 4px 0 18px; color: #fff; font-weight: 500; text-align: center; }
-.sidebar .brand-main { font: 500 33px/.82 "Cormorant Garamond", Georgia, serif; letter-spacing: -.8px; }
-.sidebar .brand-main i { color: #c79735; font-style: normal; }
-.sidebar .brand-sub { margin-top: 8px; color: #d5a644; font: 700 10px/1 "IBM Plex Sans", sans-serif; letter-spacing: 6px; text-transform: uppercase; transform: translateX(3px); }
+.sidebar .brand { display: block; width: 175px; margin: -11px auto 7px; }
 .sidebar-label { margin: 0 0 27px; color: #d1ccc4; font-size: 8px; letter-spacing: .2px; text-align: center; }
 .sidebar nav { display: grid; gap: 8px; }
 .sidebar nav button { position: relative; min-height: 37px; justify-content: center; padding: 7px 12px; border: 1px solid #d4d4d4; border-radius: 6px; background: #dedede; color: #282828; font-size: 11px; font-weight: 500; text-align: center; }
@@ -152,8 +147,8 @@ input:focus, select:focus, textarea:focus { border-color: #9b805e !important; bo
 
 @media (min-width: 768px) and (max-width: 1100px) {
   .sidebar-inner { padding-inline: 9px; }
-  .sidebar .brand-main { font-size: 18px; }
-  .sidebar .brand-sub { font-size: 6px; letter-spacing: 2px; }
+  .sidebar .brand { width: 54px; margin-inline: -1px; overflow: hidden; }
+  .sidebar .brand img { width: 98px; max-width: none; transform: translateX(-22px); }
   .sidebar-footer { border: 0; }
   .sidebar-user { display: none; }
   .settings-nav { justify-content: center; width: 42px; margin-inline: auto; border-color: #d4a537; }
@@ -162,16 +157,44 @@ input:focus, select:focus, textarea:focus { border-color: #9b805e !important; bo
 }
 
 @media (max-width: 767px) {
-  .sidebar nav:has(.mobile-settings) { grid-template-columns: repeat(4, 1fr); }
-  .mobile-settings { display: flex !important; }
-  .sidebar nav button { min-height: 66px; border: 0; border-radius: 0; background: transparent; color: #d8d2c5; box-shadow: none; }
-  .sidebar nav button:hover, .sidebar nav button.active { border: 0; background: #2b2b2b; color: #fff; box-shadow: inset 0 3px #d4a537; }
-  .sidebar nav button::before { display: none; }
-  .sidebar nav button svg { display: block; }
-  .chat-welcome { min-height: calc(100vh - 66px); padding: 28px; }
+  .app-shell { padding-bottom: 178px; }
+  .sidebar { height: 178px; padding: 0; background: #292929; }
+  .sidebar .brand { display: none; }
+  .sidebar-inner { display: grid; grid-template-columns: minmax(0, 1fr) 190px; gap: 18px; height: 100%; padding: 18px 20px; }
+  .sidebar nav { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; height: auto; }
+  .sidebar nav button { min-width: 0; min-height: 0; height: 100%; flex-direction: row; padding: 10px 6px; border: 0; border-radius: 22px; background: #dedede; color: #292929; box-shadow: none; font-size: 13px; font-weight: 600; }
+  .sidebar nav button:hover, .sidebar nav button.active { border: 0; background: #eeeeee; color: #202020; box-shadow: inset 0 4px #d4a537; }
+  .sidebar nav button::before, .sidebar nav button svg { display: none; }
+  .sidebar nav button > span { display: none; }
+  .sidebar nav button::after { content: attr(data-mobile-label); }
+  .sidebar-footer { display: grid; align-content: center; gap: 14px; margin: 0; padding: 0 0 0 18px; border: 0; border-left: 2px solid #d8d2c5; }
+  .sidebar-user { display: flex; min-height: 44px; }
+  .sidebar-user > span { display: grid; }
+  .sidebar-user .avatar { width: 48px; height: 42px; }
+  .sidebar-user strong { max-width: 84px; }
+  .settings-nav { height: 34px; }
+  .workspace { min-height: calc(100vh - 178px); }
+  .chat-layout { height: calc(100vh - 178px); }
+  .conversation-panel { bottom: 178px; }
+  .chat-welcome { min-height: calc(100vh - 178px); padding: 28px; }
   .chat-welcome h2 { font-size: 29px; }
   .welcome-features { display: grid; }
   .leads-page > .page-heading, .clients-page > .page-heading { padding: 16px; }
+}
+
+@media (max-width: 560px) {
+  .app-shell { padding-bottom: 226px; }
+  .sidebar { height: 226px; }
+  .sidebar-inner { grid-template-columns: 1fr; grid-template-rows: 108px auto; gap: 12px; padding: 14px; }
+  .sidebar nav { gap: 9px; }
+  .sidebar nav button { border-radius: 18px; font-size: 12px; }
+  .sidebar-footer { grid-template-columns: 1fr 1fr; gap: 9px; padding: 11px 0 0; border-top: 1px solid #777; border-left: 0; }
+  .sidebar-user, .settings-nav { height: 42px; }
+  .settings-nav strong { padding-left: 7px; }
+  .workspace { min-height: calc(100vh - 226px); }
+  .chat-layout { height: calc(100vh - 226px); }
+  .conversation-panel { bottom: 226px; }
+  .chat-welcome { min-height: calc(100vh - 226px); }
 }
 
 @media (max-width: 560px) {

@@ -7,6 +7,6 @@
   "background_color": "#f3f1ec",
   "theme_color": "#1f1f1f",
   "icons": [
-    { "src": "/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }
+    { "src": "/karrer-icon.png", "sizes": "1254x1254", "type": "image/png", "purpose": "any" }
   ]
 }

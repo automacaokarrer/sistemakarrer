@@ -1,5 +1,5 @@
-const CACHE = "karrer-shell-v2";
-const SHELL = ["/", "/manifest.webmanifest", "/icon.svg"];
+const CACHE = "karrer-shell-v3";
+const SHELL = ["/", "/manifest.webmanifest", "/karrer-icon.png"];
 
 self.addEventListener("install", (event) => {
   event.waitUntil(caches.open(CACHE).then((cache) => cache.addAll(SHELL)));

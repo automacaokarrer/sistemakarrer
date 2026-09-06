@@ -234,11 +234,10 @@ function Sidebar({ view, user, unread, onNavigate, onLogout }: { view: View; use
         <span className="sidebar-label">Atendimento</span>
         <nav>
           {items.map(({ id, label, icon: Icon }) => (
-            <button key={id} className={(view === id || (view === "lead" && id === "leads")) ? "active" : ""} onClick={() => onNavigate(id)}>
+            <button key={id} data-mobile-label={id === "chat" ? "Chat" : id === "clients" ? "Clientes" : label} className={(view === id || (view === "lead" && id === "leads")) ? "active" : ""} onClick={() => onNavigate(id)}>
               <Icon size={18} /><span>{label}</span>{id === "chat" && unread > 0 && <b>{unread}</b>}
             </button>
           ))}
-          {user.permissions.settings && <button className={`mobile-settings ${view === "settings" ? "active" : ""}`} onClick={() => onNavigate("settings")}><Settings size={18} /><span>Configurações</span></button>}
         </nav>
         <div className="sidebar-footer">
           <div className="sidebar-user">
@@ -524,7 +523,7 @@ function Modal({ title, subtitle, tone, onClose, children }: { title: string; su
 }
 
 function ConversationRow({ conversation, active, onClick }: { conversation: Conversation; active: boolean; onClick: () => void }) { return <button className={`conversation-row ${active ? "active" : ""}`} onClick={onClick}><Avatar name={conversation.name} online={conversation.online} size="sm" /><span><strong>{conversation.name}</strong><small>{conversation.lastMessageType === "audio" ? "Áudio" : conversation.lastMessage ?? conversation.stage}</small></span><time>{formatTime(conversation.lastMessageAt)}{conversation.unreadCount > 0 && <b>{conversation.unreadCount}</b>}</time></button>; }
-function Brand() { return <div className="brand"><span className="brand-main">Karrer<i>&amp;</i></span><span className="brand-sub">Advogados</span></div>; }
+function Brand() { return <div className="brand"><img src="/karrer-logo.png" alt="Karrer & Advogados" /></div>; }
 function Avatar({ name, online, size = "md" }: { name: string | null; online?: boolean; size?: "xs" | "sm" | "md" }) { return <div className={`avatar ${size}`}>{initials(name)}{online && <i />}</div>; }
 function ClassificationBadge({ value }: { value: Classification }) { return <span className={`badge ${value}`}>Lead {classificationLabel[value].toLowerCase()}</span>; }
 function SearchBox({ value, onChange, placeholder }: { value: string; onChange: (value: string) => void; placeholder: string }) { return <label className="search-box"><Search size={16} /><input value={value} onChange={(event) => onChange(event.target.value)} placeholder={placeholder} /></label>; }

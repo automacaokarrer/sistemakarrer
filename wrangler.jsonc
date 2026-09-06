@@ -9,6 +9,12 @@
     "not_found_handling": "single-page-application",
     "run_worker_first": ["/api/*"]
   },
+  "routes": [
+    {
+      "pattern": "crmkarrer.com.br",
+      "custom_domain": true
+    }
+  ],
   "d1_databases": [
     {
       "binding": "DB",
@@ -38,6 +44,6 @@
   "vars": {
     "APP_NAME": "Karrer Atendimento",
     "ENVIRONMENT": "production",
-    "APP_BASE_URL": "https://karrer-atendimento.automacaokarrer.workers.dev"
+    "APP_BASE_URL": "https://crmkarrer.com.br"
   }
 }
