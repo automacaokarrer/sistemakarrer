@@ -1,0 +1,15 @@
+.mobile-back {
+  display: none;
+  border: 0;
+  background: transparent;
+  color: var(--graphite);
+  padding: 7px;
+}
+
+@media (max-width: 767px) {
+  .mobile-back {
+    display: grid;
+    place-items: center;
+    flex: none;
+  }
+}

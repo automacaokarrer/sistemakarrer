@@ -1,0 +1,7 @@
+# Copie para .dev.vars apenas no desenvolvimento local.
+BOOTSTRAP_ADMIN_TOKEN=troque-por-um-token-longo-e-aleatorio
+ZAPI_INSTANCE_ID=
+ZAPI_INSTANCE_TOKEN=
+ZAPI_CLIENT_TOKEN=
+ZAPI_WEBHOOK_TOKEN=
+ENVIRONMENT=development

@@ -1,0 +1,12 @@
+{
+  "name": "Karrer Atendimento",
+  "short_name": "Karrer",
+  "description": "Central jurídica de atendimento e gestão de leads",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#f3f1ec",
+  "theme_color": "#1f1f1f",
+  "icons": [
+    { "src": "/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }
+  ]
+}
