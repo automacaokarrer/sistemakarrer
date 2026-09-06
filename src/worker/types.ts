@@ -6,7 +6,14 @@ export interface SecretBindings {
   ZAPI_WEBHOOK_TOKEN?: string;
 }
 
-export type AppEnv = Env & SecretBindings;
+export interface AppEnv extends SecretBindings {
+  DB: D1Database;
+  MEDIA: R2Bucket;
+  CHAT_ROOMS: DurableObjectNamespace<import("./chat-room").ChatRoom>;
+  ASSETS: Fetcher;
+  APP_NAME: string;
+  ENVIRONMENT: string;
+}
 
 export interface SessionUser {
   id: string;
