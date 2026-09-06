@@ -3,7 +3,7 @@ import type { AppEnv, SessionUser } from "./types";
 
 const encoder = new TextEncoder();
 const SESSION_COOKIE = "karrer_session";
-const ITERATIONS = 210_000;
+const ITERATIONS = 100_000;
 
 function bytesToBase64(bytes: Uint8Array): string {
   let binary = "";
