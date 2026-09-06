@@ -108,24 +108,39 @@ function Dashboard({ user, onLogout }: { user: User; onLogout: () => void }) {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
 
-  const reload = useCallback(async () => {
+  const reloadConversations = useCallback(async () => {
     setLoading(true);
     try {
-      const [conversationData, contactData, summaryData] = await Promise.all([
-        api<{ conversations: Conversation[] }>("/api/conversations"),
-        api<{ contacts: Contact[] }>("/api/contacts"),
-        api<LeadSummary>("/api/leads/summary"),
-      ]);
+      const conversationData = await api<{ conversations: Conversation[] }>("/api/conversations");
       setConversations(conversationData.conversations);
-      setContacts(contactData.contacts);
-      setSummary(summaryData);
       setSelectedId((current) => current ?? conversationData.conversations[0]?.id ?? null);
     } finally {
       setLoading(false);
     }
   }, []);
 
-  useEffect(() => void reload(), [reload]);
+  const loadContacts = useCallback(async () => {
+    const data = await api<{ contacts: Contact[] }>("/api/contacts");
+    setContacts(data.contacts);
+  }, []);
+
+  const loadSummary = useCallback(async () => {
+    setSummary(await api<LeadSummary>("/api/leads/summary"));
+  }, []);
+
+  const refreshLeads = useCallback(async () => {
+    await Promise.all([reloadConversations(), loadSummary()]);
+  }, [loadSummary, reloadConversations]);
+
+  const refreshClients = useCallback(async () => {
+    await Promise.all([reloadConversations(), loadContacts()]);
+  }, [loadContacts, reloadConversations]);
+
+  useEffect(() => void reloadConversations(), [reloadConversations]);
+  useEffect(() => {
+    if (view === "leads" || view === "lead") void loadSummary();
+    if (view === "clients") void loadContacts();
+  }, [loadContacts, loadSummary, view]);
   const selected = conversations.find((conversation) => conversation.id === selectedId) ?? null;
 
   async function logout() {
@@ -142,10 +157,10 @@ function Dashboard({ user, onLogout }: { user: User; onLogout: () => void }) {
       <Sidebar view={view} user={user} unread={conversations.reduce((sum, item) => sum + item.unreadCount, 0)} onNavigate={navigate} onLogout={logout} />
       <main className="workspace">
         {loading ? <div className="page-loader"><LoaderCircle className="spin" /> Carregando atendimento...</div> : null}
-        {view === "chat" && <ChatPage conversations={conversations} selected={selected} onSelect={setSelectedId} onOpenLead={() => setView("lead")} onRefresh={reload} />}
-        {view === "leads" && <LeadsPage conversations={conversations} summary={summary} onOpen={(id) => { setSelectedId(id); setView("lead"); }} onRefresh={reload} />}
-        {view === "lead" && <LeadDetail conversation={selected} onBack={() => setView("leads")} onChat={() => setView("chat")} onRefresh={reload} />}
-        {view === "clients" && <ClientsPage contacts={contacts} onRefresh={reload} />}
+        {view === "chat" && <ChatPage conversations={conversations} selected={selected} onSelect={setSelectedId} onOpenLead={() => setView("lead")} onRefresh={reloadConversations} />}
+        {view === "leads" && <LeadsPage conversations={conversations} summary={summary} onOpen={(id) => { setSelectedId(id); setView("lead"); }} onRefresh={refreshLeads} />}
+        {view === "lead" && <LeadDetail conversation={selected} onBack={() => setView("leads")} onChat={() => setView("chat")} onRefresh={refreshLeads} />}
+        {view === "clients" && <ClientsPage contacts={contacts} onRefresh={refreshClients} />}
       </main>
     </div>
   );

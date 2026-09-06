@@ -7,6 +7,7 @@ const securityHeaders = {
 export function json(data: unknown, init: ResponseInit = {}): Response {
   const headers = new Headers(init.headers);
   headers.set("Content-Type", "application/json; charset=utf-8");
+  headers.set("Cache-Control", "no-store");
   for (const [key, value] of Object.entries(securityHeaders)) headers.set(key, value);
   return Response.json(data, { ...init, headers });
 }
