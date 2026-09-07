@@ -2,6 +2,8 @@
 
 Central de atendimento jurídico com WhatsApp, gestão de leads e cadastro de clientes. A aplicação usa React no front-end e Cloudflare Workers no back-end, com D1, R2 e Durable Objects.
 
+Consulte [PROJECT_MEMORY.md](PROJECT_MEMORY.md) antes de alterar integrações ou publicar uma nova versão.
+
 ## Desenvolvimento local
 
 1. Preencha o `.env` local. Ele é ignorado pelo Git.
