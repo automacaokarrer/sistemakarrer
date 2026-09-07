@@ -179,4 +179,7 @@ Deploy e push são operações diferentes: o deploy publica os arquivos locais n
 - O formulário de clientes ganhou feedback correto de sucesso/erro, contador de documentos, autocomplete e limpeza integral de estados.
 - O Playwright agora usa exclusivamente a porta `5197` com `strictPort` e não reutiliza servidores de outros projetos.
 - Essas alterações foram publicadas e validadas em produção na versão `1fd5f9aa-a362-4ca6-9fcb-45288ea4c41c`.
+- O seed idempotente `seed/validation.sql` foi aplicado no D1 local e remoto para validação visual. Ele mantém 6 contatos/conversas fictícios identificados pelo prefixo `demo-`, distribuídos em 2 leads quentes, 2 mornos e 2 frios, com 14 mensagens de texto, áudio e documento.
+- Os telefones do seed são deliberadamente fictícios (`550000000001` a `550000000006`) e nenhuma mensagem foi enviada pela Z-API.
+- As contagens foram confirmadas diretamente no D1 remoto após a importação. A validação autenticada automatizada não usa `INITIAL_ADMIN_PASSWORD`, pois esse valor de configuração inicial pode ficar desatualizado depois que o administrador troca a senha.
 - Continua pendente configurar no Cloudflare os três secrets do Google Drive usando as credenciais da conta de serviço institucional da Karrer e repetir o deploy e o teste de upload.
