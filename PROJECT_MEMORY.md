@@ -174,4 +174,9 @@ Deploy e push são operações diferentes: o deploy publica os arquivos locais n
 
 ## Próximo passo conhecido
 
-Configurar no Cloudflare os três secrets do Google Drive usando as credenciais da conta de serviço institucional da Karrer e repetir o deploy e o teste de upload.
+- A página de Leads foi aprimorada localmente sem alterar sua identidade visual: o filtro de hora de entrada agora funciona de fato, os controles receberam rótulos acessíveis e os estados vazios ficaram contextuais.
+- O design de Leads foi aplicado ao Cadastro de Clientes com hero bege, quatro KPIs, contorno amarelo, cartões, hierarquia e responsividade equivalentes.
+- O formulário de clientes ganhou feedback correto de sucesso/erro, contador de documentos, autocomplete e limpeza integral de estados.
+- O Playwright agora usa exclusivamente a porta `5197` com `strictPort` e não reutiliza servidores de outros projetos.
+- Essas alterações ainda precisam ser publicadas após aprovação do usuário.
+- Continua pendente configurar no Cloudflare os três secrets do Google Drive usando as credenciais da conta de serviço institucional da Karrer e repetir o deploy e o teste de upload.

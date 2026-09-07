@@ -55,16 +55,25 @@ test("login e cadastro público permanecem utilizáveis", async ({ page }) => {
   await expectNoHorizontalOverflow(page);
 });
 
-test("painel principal abre todos os módulos autorizados", async ({ page }) => {
+test("painel principal abre todos os módulos autorizados", async ({ page }, testInfo) => {
   await mockDashboard(page);
   await page.goto("/");
   await expect(page.getByRole("heading", { name: "Conversas", exact: true })).toBeVisible();
 
   await page.getByRole("button", { name: "Leads" }).click();
   await expect(page.getByRole("heading", { name: "Leads", exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "Filtrar por hora de entrada" }).click();
+  await expect(page.getByRole("dialog", { name: "Hora de entrada" })).toBeVisible();
+  await page.getByRole("button", { name: /Todos os horários/ }).click();
+  if (testInfo.project.name === "desktop") await testInfo.attach("leads-page", { body: await page.screenshot({ fullPage: true }), contentType: "image/png" });
+  if (process.env.CAPTURE_UI) await page.screenshot({ path: `tmp/${testInfo.project.name}-leads-page.png`, fullPage: true });
 
   await page.getByRole("button", { name: "Clientes", exact: true }).click();
   await expect(page.getByRole("heading", { name: "Cadastro de clientes" })).toBeVisible();
+  await expect(page.getByText("Cadastros completos")).toBeVisible();
+  await expect(page.getByText("Com banco informado")).toBeVisible();
+  if (testInfo.project.name === "desktop") await testInfo.attach("clients-page", { body: await page.screenshot({ fullPage: true }), contentType: "image/png" });
+  if (process.env.CAPTURE_UI) await page.screenshot({ path: `tmp/${testInfo.project.name}-clients-page.png`, fullPage: true });
 
   await page.getByRole("button", { name: "Configurações" }).click();
   await expect(page.getByRole("heading", { name: "Configurações" })).toBeVisible();
