@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { requireAnyPermission, requirePermission } from "./auth";
+import { requireAdmin, requireAnyPermission, requirePermission } from "./auth";
 import { HttpError } from "./http";
 import type { SessionUser } from "./types";
 
@@ -8,6 +8,8 @@ const user: SessionUser = {
   name: "Atendente",
   email: "atendente@karrer.test",
   role: "attendant",
+  avatarUrl: null,
+  professionalRole: "Administrador",
   permissions: { chat: true, leads: false, clients: false, settings: false },
 };
 
@@ -20,5 +22,10 @@ describe("autorização por módulo", () => {
   it("aceita quando ao menos uma permissão está disponível", () => {
     expect(() => requireAnyPermission(user, ["leads", "chat"])).not.toThrow();
     expect(() => requireAnyPermission(user, ["leads", "clients"])).toThrow(HttpError);
+  });
+
+  it("reserva a gestão de usuários ao administrador", () => {
+    expect(() => requireAdmin(user)).toThrow(HttpError);
+    expect(() => requireAdmin({ ...user, role: "admin" })).not.toThrow();
   });
 });

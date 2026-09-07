@@ -7,6 +7,9 @@ export interface SecretBindings {
   RESEND_API_KEY?: string;
   EMAIL_FROM?: string;
   APP_BASE_URL?: string;
+  GOOGLE_SERVICE_ACCOUNT_EMAIL?: string;
+  GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY?: string;
+  GOOGLE_DRIVE_FOLDER_ID?: string;
 }
 
 export interface AppEnv extends SecretBindings {
@@ -23,6 +26,8 @@ export interface SessionUser {
   name: string;
   email: string;
   role: "admin" | "manager" | "attendant";
+  avatarUrl: string | null;
+  professionalRole: string | null;
   permissions: Permissions;
 }
 

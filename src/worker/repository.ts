@@ -7,6 +7,7 @@ type Classification = "hot" | "warm" | "cold";
 interface ConversationRow {
   id: string;
   contactId: string;
+  createdAt: string;
   name: string | null;
   phone: string;
   bank: string | null;
@@ -35,7 +36,7 @@ export interface MessageRow {
   createdAt: string;
 }
 
-const conversationSelect = `SELECT c.id, c.contact_id AS contactId, COALESCE(ct.name, ct.phone) AS name,
+const conversationSelect = `SELECT c.id, c.contact_id AS contactId, c.created_at AS createdAt, COALESCE(ct.name, ct.phone) AS name,
   ct.phone, ct.bank, c.stage, c.classification, c.score, c.last_message_at AS lastMessageAt,
   c.unread_count AS unreadCount, c.online, c.last_seen_at AS lastSeenAt, u.name AS assigneeName,
   (SELECT m.body FROM messages m WHERE m.conversation_id = c.id ORDER BY m.created_at DESC, m.id DESC LIMIT 1) AS lastMessage,

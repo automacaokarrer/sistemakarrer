@@ -5,6 +5,8 @@ export interface User {
   name: string;
   email: string;
   role: "admin" | "manager" | "attendant";
+  avatarUrl: string | null;
+  professionalRole: string | null;
   permissions: Permissions;
 }
 
@@ -18,17 +20,22 @@ export interface Permissions {
 export interface ManagedUser extends User {
   active: boolean;
   emailVerified: boolean;
+  instagram: string | null;
+  online: boolean;
+  lastSeenAt: string | null;
   createdAt: string;
 }
 
 export interface AuthStatus {
   setupRequired: boolean;
   user: User | null;
+  features: { googleDrive: boolean };
 }
 
 export interface Conversation {
   id: string;
   contactId: string;
+  createdAt: string;
   name: string;
   phone: string;
   bank: string | null;

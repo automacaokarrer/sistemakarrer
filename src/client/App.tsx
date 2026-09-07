@@ -21,11 +21,10 @@ import {
   Settings,
   ShieldCheck,
   Trash2,
-  UserPlus,
   Users,
   X,
 } from "lucide-react";
-import { FormEvent, useCallback, useEffect, useRef, useState } from "react";
+import { FocusEvent, FormEvent, useCallback, useEffect, useRef, useState } from "react";
 import { api, formatTime, initials } from "./api";
 import type { AuthStatus, Classification, Contact, Conversation, LeadSummary, ManagedUser, Message, Permissions, User } from "./types";
 
@@ -35,6 +34,7 @@ type ConversationFilter = "all" | "unread" | "hot";
 const classificationLabel: Record<Classification, string> = { hot: "Quente", warm: "Morno", cold: "Frio" };
 const resetToken = new URLSearchParams(location.search).get("reset");
 const activationEmail = new URLSearchParams(location.search).get("activate");
+const activationRequiresPassword = new URLSearchParams(location.search).get("invite") === "1";
 
 function App() {
   const [auth, setAuth] = useState<AuthStatus | null>(null);
@@ -52,7 +52,7 @@ function App() {
   useEffect(() => void loadAuth(), [loadAuth]);
 
   if (resetToken) return <ResetPasswordScreen token={resetToken} />;
-  if (activationEmail) return <ActivateAccountScreen email={activationEmail} />;
+  if (activationEmail) return <ActivateAccountScreen email={activationEmail} requiresPassword={activationRequiresPassword} />;
 
   if (!auth) {
     return (
@@ -66,10 +66,10 @@ function App() {
   }
 
   if (!auth.user) return <AuthScreen setupRequired={auth.setupRequired} onAuthenticated={loadAuth} />;
-  return <Dashboard user={auth.user} onLogout={() => setAuth({ setupRequired: false, user: null })} />;
+  return <Dashboard user={auth.user} googleDrive={auth.features.googleDrive} onLogout={() => setAuth({ setupRequired: false, user: null, features: auth.features })} />;
 }
 
-function ActivateAccountScreen({ email }: { email: string }) {
+function ActivateAccountScreen({ email, requiresPassword }: { email: string; requiresPassword: boolean }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [done, setDone] = useState(false);
@@ -77,16 +77,16 @@ function ActivateAccountScreen({ email }: { email: string }) {
     event.preventDefault();
     const data = new FormData(event.currentTarget);
     const password = String(data.get("password") ?? "");
-    if (password !== String(data.get("confirmation") ?? "")) { setError("As senhas não coincidem."); return; }
+    if (requiresPassword && password !== String(data.get("confirmation") ?? "")) { setError("As senhas não coincidem."); return; }
     setBusy(true); setError("");
     try {
-      await api("/api/auth/activate", { method: "POST", body: JSON.stringify({ email, code: data.get("code"), password }) });
+      await api("/api/auth/activate", { method: "POST", body: JSON.stringify({ email, code: data.get("code"), ...(requiresPassword ? { password } : {}) }) });
       setDone(true);
     } catch (reason) { setError(reason instanceof Error ? reason.message : "Não foi possível confirmar o acesso."); }
     finally { setBusy(false); }
   }
-  if (done) return <main className="auth-page"><section className="auth-brand"><Brand /><p>Seu acesso foi confirmado com segurança.</p></section><div className="auth-card"><span className="eyebrow">Conta ativada</span><h1>Tudo pronto</h1><p>Sua senha foi criada. Você já pode entrar no sistema.</p><button className="primary wide" onClick={() => { history.replaceState({}, "", "/"); location.reload(); }}>Ir para o login</button></div></main>;
-  return <main className="auth-page"><section className="auth-brand"><Brand /><p>Confirme seu e-mail e escolha uma senha pessoal.</p></section><form className="auth-card" onSubmit={submit}><span className="eyebrow">Primeiro acesso</span><h1>Confirmar acesso</h1><p className="auth-helper">Enviamos um código para <strong>{email}</strong>.</p><Field label="Código de 6 dígitos" name="code" inputMode="numeric" pattern="[0-9]{6}" maxLength={6} autoComplete="one-time-code" required /><Field label="Criar senha" name="password" type="password" minLength={10} required /><Field label="Confirmar senha" name="confirmation" type="password" minLength={10} required />{error && <p className="form-error">{error}</p>}<button className="primary wide" disabled={busy}>{busy ? "Confirmando..." : "Confirmar e acessar"}</button></form></main>;
+  if (done) return <main className="auth-page"><section className="auth-brand"><Brand /><p>Seu acesso foi confirmado com segurança.</p></section><div className="auth-card"><span className="eyebrow">Conta ativada</span><h1>Tudo pronto</h1><p>Seu e-mail foi confirmado. Você já pode entrar no sistema.</p><button className="primary wide" onClick={() => { history.replaceState({}, "", "/"); location.reload(); }}>Ir para o login</button></div></main>;
+  return <main className="auth-page"><section className="auth-brand"><Brand /><p>Confirme seu e-mail para ativar o acesso.</p></section><form className="auth-card" onSubmit={submit}><span className="eyebrow">Confirmação de e-mail</span><h1>{requiresPassword ? "Crie seu acesso" : "Digite seu código"}</h1><p className="auth-helper">Enviamos um código para <strong>{email}</strong>.</p><Field label="Código de 6 dígitos" name="code" inputMode="numeric" pattern="[0-9]{6}" maxLength={6} autoComplete="one-time-code" required />{requiresPassword && <><Field label="Criar senha" name="password" type="password" autoComplete="new-password" minLength={10} required /><Field label="Confirmar senha" name="confirmation" type="password" autoComplete="new-password" minLength={10} required /></>}{error && <p className="form-error">{error}</p>}<button className="primary wide" disabled={busy}>{busy ? "Confirmando..." : requiresPassword ? "Criar senha e confirmar" : "Confirmar e-mail"}</button></form></main>;
 }
 
 function ResetPasswordScreen({ token }: { token: string }) {
@@ -111,6 +111,8 @@ function ResetPasswordScreen({ token }: { token: string }) {
 function AuthScreen({ setupRequired, onAuthenticated }: { setupRequired: boolean; onAuthenticated: () => Promise<void> }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const [mode, setMode] = useState<"login" | "register">("login");
+  const [photoName, setPhotoName] = useState("");
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -118,11 +120,13 @@ function AuthScreen({ setupRequired, onAuthenticated }: { setupRequired: boolean
     setBusy(true);
     setError("");
     try {
-      const payload = Object.fromEntries(data.entries());
-      await api(setupRequired ? "/api/auth/bootstrap" : "/api/auth/login", {
-        method: "POST",
-        body: JSON.stringify(payload),
-      });
+      if (!setupRequired && mode === "register") {
+        if (data.get("password") !== data.get("confirmation")) throw new Error("As senhas não coincidem.");
+        const result = await api<{ email: string }>("/api/auth/register", { method: "POST", body: data });
+        location.href = `/?activate=${encodeURIComponent(result.email)}`;
+        return;
+      }
+      await api(setupRequired ? "/api/auth/bootstrap" : "/api/auth/login", { method: "POST", body: JSON.stringify(Object.fromEntries(data.entries())) });
       await onAuthenticated();
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "Não foi possível entrar.");
@@ -137,22 +141,26 @@ function AuthScreen({ setupRequired, onAuthenticated }: { setupRequired: boolean
         <Brand />
         <p>Atendimento jurídico, relacionamento e documentos em um só lugar.</p>
       </section>
-      <form className="auth-card" onSubmit={submit}>
-        <span className="eyebrow">{setupRequired ? "Configuração inicial" : "Acesso seguro"}</span>
-        <h1>{setupRequired ? "Criar administrador" : "Entrar no sistema"}</h1>
-        {setupRequired && <Field label="Nome completo" name="name" autoComplete="name" required />}
+      <form className={`auth-card ${mode === "register" ? "register-card" : ""}`} onSubmit={submit}>
+        {!setupRequired && <div className="auth-tabs"><button type="button" className={mode === "login" ? "active" : ""} onClick={() => { setMode("login"); setError(""); }}>Entrar</button><button type="button" className={mode === "register" ? "active" : ""} onClick={() => { setMode("register"); setError(""); }}>Criar conta</button></div>}
+        <span className="eyebrow">{setupRequired ? "Configuração inicial" : mode === "register" ? "Novo acesso" : "Acesso seguro"}</span>
+        <h1>{setupRequired ? "Criar administrador" : mode === "register" ? "Cadastre-se" : "Entrar no sistema"}</h1>
+        {(setupRequired || mode === "register") && <Field label="Nome completo" name="name" autoComplete="name" required />}
         <Field label="E-mail" name="email" type="email" autoComplete="email" required />
-        <Field label="Senha" name="password" type="password" autoComplete={setupRequired ? "new-password" : "current-password"} minLength={10} required />
+        {mode === "register" && !setupRequired && <Field label="Perfil do Instagram" name="instagram" placeholder="@seuperfil" autoComplete="off" required />}
+        {mode === "register" && !setupRequired && <label>Função profissional<select name="professionalRole" required defaultValue=""><option value="" disabled>Selecione sua função</option><option value="advogado">Advogado</option><option value="advogada">Advogada</option><option value="estagiario">Estagiário</option><option value="secretaria">Secretaria</option><option value="atendente_chat">Atendente de chat</option></select></label>}
+        <Field label="Senha" name="password" type="password" autoComplete={setupRequired || mode === "register" ? "new-password" : "current-password"} minLength={10} required />
+        {mode === "register" && !setupRequired && <><Field label="Confirmar senha" name="confirmation" type="password" minLength={10} required /><label className="photo-field">Foto de perfil *<span><CircleUserRound size={22} />{photoName || "Escolher foto JPG, PNG ou WebP"}</span><input name="avatar" type="file" accept="image/jpeg,image/png,image/webp" onChange={(event) => setPhotoName(event.target.files?.[0]?.name ?? "")} required /></label><small className="register-note">Enviaremos um código de 6 dígitos para confirmar seu e-mail.</small></>}
         {setupRequired && <Field label="Código de inicialização" name="bootstrapToken" type="password" required />}
         {error && <p className="form-error">{error}</p>}
-        <button className="primary wide" disabled={busy}>{busy ? "Aguarde..." : setupRequired ? "Criar acesso" : "Entrar"}</button>
+        <button className="primary wide" disabled={busy}>{busy ? "Aguarde..." : setupRequired ? "Criar acesso" : mode === "register" ? "Cadastrar e confirmar e-mail" : "Entrar"}</button>
       </form>
     </main>
   );
 }
 
-function Dashboard({ user, onLogout }: { user: User; onLogout: () => void }) {
-  const firstView: View = user.permissions.chat ? "chat" : user.permissions.leads ? "leads" : user.permissions.clients ? "clients" : "settings";
+function Dashboard({ user, googleDrive, onLogout }: { user: User; googleDrive: boolean; onLogout: () => void }) {
+  const firstView: View = user.permissions.chat ? "chat" : user.permissions.leads ? "leads" : user.permissions.clients ? "clients" : user.role === "admin" ? "settings" : "chat";
   const [view, setView] = useState<View>(firstView);
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [contacts, setContacts] = useState<Contact[]>([]);
@@ -190,6 +198,13 @@ function Dashboard({ user, onLogout }: { user: User; onLogout: () => void }) {
 
   useEffect(() => { if (user.permissions.chat || user.permissions.leads) void reloadConversations(); }, [reloadConversations, user.permissions.chat, user.permissions.leads]);
   useEffect(() => {
+    const ping = () => { if (document.visibilityState === "visible") void api("/api/auth/presence", { method: "POST" }).catch(() => undefined); };
+    ping();
+    const timer = window.setInterval(ping, 5 * 60 * 1000);
+    document.addEventListener("visibilitychange", ping);
+    return () => { window.clearInterval(timer); document.removeEventListener("visibilitychange", ping); };
+  }, []);
+  useEffect(() => {
     if (view === "leads" || view === "lead") void loadSummary();
     if (view === "clients") void loadContacts();
   }, [loadContacts, loadSummary, view]);
@@ -212,8 +227,8 @@ function Dashboard({ user, onLogout }: { user: User; onLogout: () => void }) {
         {view === "chat" && user.permissions.chat && <ChatPage conversations={conversations} selected={selected} onSelect={setSelectedId} onOpenLead={() => setView("lead")} onRefresh={reloadConversations} />}
         {view === "leads" && user.permissions.leads && <LeadsPage conversations={conversations} summary={summary} onOpen={(id) => { setSelectedId(id); setView("lead"); }} onRefresh={refreshLeads} />}
         {view === "lead" && user.permissions.leads && <LeadDetail conversation={selected} onBack={() => setView("leads")} onChat={() => user.permissions.chat && setView("chat")} onRefresh={refreshLeads} />}
-        {view === "clients" && user.permissions.clients && <ClientsPage contacts={contacts} onRefresh={refreshClients} />}
-        {view === "settings" && user.permissions.settings && <SettingsPage currentUser={user} />}
+        {view === "clients" && user.permissions.clients && <ClientsPage contacts={contacts} googleDrive={googleDrive} onRefresh={refreshClients} />}
+        {view === "settings" && user.role === "admin" && <SettingsPage currentUser={user} />}
       </main>
     </div>
   );
@@ -234,18 +249,18 @@ function Sidebar({ view, user, unread, onNavigate, onLogout }: { view: View; use
         <span className="sidebar-label">Atendimento</span>
         <nav>
           {items.map(({ id, label, icon: Icon }) => (
-            <button key={id} data-mobile-label={id === "chat" ? "Chat" : id === "clients" ? "Clientes" : label} className={(view === id || (view === "lead" && id === "leads")) ? "active" : ""} onClick={() => onNavigate(id)}>
+            <button key={id} aria-label={id === "chat" ? "Chat" : id === "clients" ? "Clientes" : label} data-mobile-label={id === "chat" ? "Chat" : id === "clients" ? "Clientes" : label} className={(view === id || (view === "lead" && id === "leads")) ? "active" : ""} onClick={() => onNavigate(id)}>
               <Icon size={18} /><span>{label}</span>{id === "chat" && unread > 0 && <b>{unread}</b>}
             </button>
           ))}
         </nav>
         <div className="sidebar-footer">
           <div className="sidebar-user">
-            <Avatar name={user.name} size="sm" />
+            <Avatar name={user.name} imageUrl={user.avatarUrl} size="sm" />
             <span><strong>{user.name}</strong><small>Online <i /></small></span>
             <button className="logout-button" title="Sair" aria-label="Sair" onClick={() => void onLogout()}><LogOut size={17} /></button>
           </div>
-          {user.permissions.settings && <button className={`settings-nav ${view === "settings" ? "active" : ""}`} onClick={() => onNavigate("settings")}><span><Settings size={18} /></span><strong>Configurações</strong></button>}
+          {user.role === "admin" && <button className={`settings-nav ${view === "settings" ? "active" : ""}`} onClick={() => onNavigate("settings")}><span><Settings size={18} /></span><strong>Configurações</strong></button>}
         </div>
       </div>
     </aside>
@@ -369,7 +384,44 @@ function MessageBubble({ message }: { message: Message }) {
 function LeadsPage({ conversations, summary, onOpen, onRefresh }: { conversations: Conversation[]; summary: LeadSummary; onOpen: (id: string) => void; onRefresh: () => Promise<void> }) {
   const [filter, setFilter] = useState<"all" | Classification>("all");
   const [search, setSearch] = useState("");
-  const leads = conversations.filter((item) => (filter === "all" || item.classification === filter) && `${item.name} ${item.phone}`.toLowerCase().includes(search.toLowerCase()));
+  const [period, setPeriod] = useState<"7" | "30" | "90" | "all">("30");
+  const [attendant, setAttendant] = useState("all");
+  const [attendantModal, setAttendantModal] = useState(false);
+  const attendants = Array.from(new Set(conversations.map((item) => item.assigneeName).filter((name): name is string => Boolean(name)))).sort((a, b) => a.localeCompare(b, "pt-BR"));
+  const cutoff = period === "all" ? null : Date.now() - Number(period) * 24 * 60 * 60 * 1000;
+  const periodLeads = conversations.filter((item) => (!cutoff || new Date(item.createdAt).getTime() >= cutoff) && (attendant === "all" || (attendant === "unassigned" ? !item.assigneeName : item.assigneeName === attendant)));
+  const normalizedSearch = search.trim().toLocaleLowerCase("pt-BR");
+  const leads = periodLeads.filter((item) => (filter === "all" || item.classification === filter) && `${item.name} ${item.phone} ${item.stage} ${item.assigneeName ?? ""}`.toLocaleLowerCase("pt-BR").includes(normalizedSearch));
+  const metrics = {
+    total: periodLeads.length,
+    hot: periodLeads.filter((item) => item.classification === "hot").length,
+    warm: periodLeads.filter((item) => item.classification === "warm").length,
+    cold: periodLeads.filter((item) => item.classification === "cold").length,
+  };
+  const graphDays = period === "7" ? 7 : period === "90" ? 14 : 10;
+  const trendData = Array.from({ length: graphDays }, (_, index) => {
+    const date = new Date();
+    date.setHours(0, 0, 0, 0);
+    date.setDate(date.getDate() - (graphDays - 1 - index));
+    const key = date.toISOString().slice(0, 10);
+    return { key, label: date.toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit" }), total: periodLeads.filter((item) => item.createdAt.slice(0, 10) === key).length };
+  });
+  const trendMax = Math.max(...trendData.map((item) => item.total), 1);
+
+  function exportReport() {
+    const cell = (value: unknown) => `"${String(value ?? "").replace(/"/g, '""')}"`;
+    const rows = [
+      ["Nome", "Telefone", "Classificação", "Etapa", "Último contato", "Responsável"],
+      ...leads.map((lead) => [lead.name, lead.phone, classificationLabel[lead.classification], lead.stage, lead.lastMessageAt ? new Date(lead.lastMessageAt).toLocaleString("pt-BR") : "", lead.assigneeName ?? "Não atribuído"]),
+    ];
+    const blob = new Blob(["\ufeff", rows.map((row) => row.map(cell).join(";")).join("\r\n")], { type: "text/csv;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `leads-karrer-${new Date().toISOString().slice(0, 10)}.csv`;
+    link.click();
+    URL.revokeObjectURL(url);
+  }
 
   async function updateClassification(id: string, classification: Classification) {
     await api(`/api/leads/${id}/classification`, { method: "PATCH", body: JSON.stringify({ classification }) });
@@ -378,23 +430,31 @@ function LeadsPage({ conversations, summary, onOpen, onRefresh }: { conversation
 
   return (
     <section className="page leads-page">
-      <div className="page-heading"><div><h1>Leads</h1><p>Atualizado agora · {summary.total} contatos</p></div><div className="heading-actions"><button className="select-button">Últimos 30 dias <ChevronDown size={15} /></button><button className="select-button">Todos os atendentes <ChevronDown size={15} /></button><button className="primary"><Download size={16} /> Exportar relatório</button></div></div>
-      <div className="kpi-grid">
-        <Kpi label="Total de leads" value={summary.total} dark detail="visão consolidada" />
-        <Kpi label="Quentes" value={summary.hot} tone="hot" detail="prioridade imediata" />
-        <Kpi label="Mornos" value={summary.warm} tone="warm" detail="em acompanhamento" />
-        <Kpi label="Frios" value={summary.cold} tone="cold" detail="reativação futura" />
+      <header className="leads-hero">
+        <div><h1>Leads</h1><p>Atualizado agora <span>{metrics.total} contatos</span></p></div>
+        <div className="leads-actions">
+          <label><span>Período</span><select value={period} onChange={(event) => setPeriod(event.target.value as typeof period)}><option value="7">Últimos 7 dias</option><option value="30">Últimos 30 dias</option><option value="90">Últimos 90 dias</option><option value="all">Todo o período</option></select><ChevronDown size={14} /></label>
+          <label><span>Atendente</span><select value={attendant} onChange={(event) => setAttendant(event.target.value)}><option value="all">Todos os atendentes</option><option value="unassigned">Não atribuído</option>{attendants.map((name) => <option value={name} key={name}>{name}</option>)}</select><ChevronDown size={14} /></label>
+          <button className="leads-export" onClick={exportReport} disabled={!leads.length}><Download size={15} /><span>Exportar relatório</span></button>
+        </div>
+      </header>
+      <div className="leads-kpis">
+        <Kpi label="Total de leads" value={metrics.total} detail="Visão consolidada" />
+        <Kpi label="Quentes" value={metrics.hot} tone="hot" detail="Prioridade imediata" />
+        <Kpi label="Mornos" value={metrics.warm} tone="warm" detail="Em acompanhamento" />
+        <Kpi label="Frios" value={metrics.cold} tone="cold" detail="Reativação futura" />
       </div>
-      <div className="chart-grid">
-        <div className="card chart-card"><header><strong>Novos leads por dia</strong><span>Média do período</span></header><div className="bar-chart">{(summary.daily.length ? summary.daily : Array.from({ length: 12 }, (_, index) => ({ day: String(index), total: [4, 7, 3, 9, 6, 8, 11, 5, 7, 4, 8, 6][index] }))).map((item, index, rows) => <i key={item.day} title={`${item.day}: ${item.total}`} style={{ height: `${Math.max(18, (item.total / Math.max(...rows.map((row) => row.total), 1)) * 100)}%` }} className={index === 6 ? "peak" : ""} />)}</div></div>
-        <div className="card donut-card"><div className="donut" style={{ background: `conic-gradient(var(--hot) 0 ${summary.total ? (summary.hot / summary.total) * 100 : 33}%, var(--taupe) 0 ${summary.total ? ((summary.hot + summary.warm) / summary.total) * 100 : 66}%, var(--cold) 0)` }}><span>{summary.total}</span></div><div><p><b className="dot hot" /> Quente · {summary.total ? Math.round(summary.hot / summary.total * 100) : 0}%</p><p><b className="dot warm" /> Morno · {summary.total ? Math.round(summary.warm / summary.total * 100) : 0}%</p><p><b className="dot cold" /> Frio · {summary.total ? Math.round(summary.cold / summary.total * 100) : 0}%</p><small>Tempo médio de 1ª resposta<br /><strong>{summary.averageFirstResponseMinutes || 0} min</strong></small></div></div>
+      <div className="leads-insights">
+        <article className="lead-trend"><header><span>Novos por dia</span><button className="trend-filter" onClick={() => setAttendantModal(true)}>Filtrar por hora de entrada<ChevronDown size={13} /></button></header><div className="lead-bars">{trendData.map((item) => <div key={item.key} title={`${item.label}: ${item.total} lead(s)`}><span>{item.total || ""}</span><i style={{ height: `${item.total ? Math.max(12, item.total / trendMax * 100) : 2}%` }} /><small>{item.label}</small></div>)}</div></article>
+        <article className="lead-distribution"><div className="lead-donut" style={{ background: `conic-gradient(#1f1f1f 0 ${metrics.total ? metrics.hot / metrics.total * 100 : 0}%, #e7ac2d 0 ${metrics.total ? (metrics.hot + metrics.warm) / metrics.total * 100 : 0}%, #f0d277 0 100%)` }}><span>{metrics.total}</span></div><div className="lead-legend"><p><i className="hot" />Quente <strong>{metrics.hot}</strong></p><p><i className="warm" />Morno <strong>{metrics.warm}</strong></p><p><i className="cold" />Frio <strong>{metrics.cold}</strong></p></div><div className="response-time"><span>Tempo médio da primeira resposta</span><strong>{summary.averageFirstResponseMinutes || 0}<small> min</small></strong></div></article>
       </div>
-      <div className="card leads-table">
+      <div className="leads-table">
         <div className="table-toolbar"><div className="chips"><Chip active={filter === "all"} onClick={() => setFilter("all")}>Todos</Chip>{(["hot", "warm", "cold"] as Classification[]).map((value) => <Chip key={value} active={filter === value} onClick={() => setFilter(value)}>{classificationLabel[value]}s</Chip>)}</div><SearchBox value={search} onChange={setSearch} placeholder="Buscar lead" /></div>
-        <div className="lead-row lead-head"><span>Nome</span><span>Telefone</span><span>Classificação</span><span>Etapa</span><span>Último contato</span><span /></div>
-        {leads.map((lead) => <div className="lead-row" key={lead.id}><span className="person"><Avatar name={lead.name} size="xs" /><strong>{lead.name}</strong></span><span>{lead.phone}</span><span><select className={`classification-select ${lead.classification}`} value={lead.classification} onChange={(event) => void updateClassification(lead.id, event.target.value as Classification)}><option value="hot">Quente</option><option value="warm">Morno</option><option value="cold">Frio</option></select></span><span>{lead.stage}</span><span>{formatTime(lead.lastMessageAt)}</span><button onClick={() => onOpen(lead.id)}>Abrir ficha →</button></div>)}
+        <div className="lead-row lead-head"><span>Nome</span><span>Telefone</span><span>Classificação</span><span>Etapa</span><span>Último contato</span><span>Responsável</span><span /></div>
+        {leads.map((lead) => <div className="lead-row" key={lead.id} onDoubleClick={() => onOpen(lead.id)}><span className="person"><Avatar name={lead.name} size="xs" /><strong>{lead.name}</strong></span><span data-label="Telefone">{lead.phone}</span><span data-label="Classificação"><select aria-label={`Classificação de ${lead.name}`} className={`classification-select ${lead.classification}`} value={lead.classification} onChange={(event) => void updateClassification(lead.id, event.target.value as Classification)}><option value="hot">Quente</option><option value="warm">Morno</option><option value="cold">Frio</option></select></span><span data-label="Etapa">{lead.stage}</span><span data-label="Último contato">{formatTime(lead.lastMessageAt)}</span><span data-label="Responsável">{lead.assigneeName ?? "Não atribuído"}</span><button aria-label={`Abrir ficha de ${lead.name}`} onClick={() => onOpen(lead.id)}>Abrir ficha <span>→</span></button></div>)}
         {leads.length === 0 && <Empty text="Nenhum lead neste filtro." />}
       </div>
+      {attendantModal && <Modal title="Escolher atendente" subtitle="Selecione o usuário responsável pelos leads que deseja visualizar." onClose={() => setAttendantModal(false)}><div className="attendant-picker"><button className={attendant === "all" ? "selected" : ""} onClick={() => { setAttendant("all"); setAttendantModal(false); }}><Users size={18} /><span><strong>Todos os atendentes</strong><small>Exibir a visão completa da equipe</small></span>{attendant === "all" && <CheckCheck size={17} />}</button><button className={attendant === "unassigned" ? "selected" : ""} onClick={() => { setAttendant("unassigned"); setAttendantModal(false); }}><CircleUserRound size={18} /><span><strong>Não atribuído</strong><small>Leads ainda sem responsável</small></span>{attendant === "unassigned" && <CheckCheck size={17} />}</button>{attendants.map((name) => <button key={name} className={attendant === name ? "selected" : ""} onClick={() => { setAttendant(name); setAttendantModal(false); }}><Avatar name={name} size="xs" /><span><strong>{name}</strong><small>Filtrar leads deste atendente</small></span>{attendant === name && <CheckCheck size={17} />}</button>)}</div></Modal>}
     </section>
   );
 }
@@ -416,19 +476,50 @@ function LeadDetail({ conversation, onBack, onChat, onRefresh }: { conversation:
   );
 }
 
-function ClientsPage({ contacts, onRefresh }: { contacts: Contact[]; onRefresh: () => Promise<void> }) {
+function ClientsPage({ contacts, googleDrive, onRefresh }: { contacts: Contact[]; googleDrive: boolean; onRefresh: () => Promise<void> }) {
   const [search, setSearch] = useState("");
   const [busy, setBusy] = useState(false);
+  const [cepStatus, setCepStatus] = useState("");
+  const [clientNotice, setClientNotice] = useState("");
   const visible = contacts.filter((contact) => `${contact.name} ${contact.phone}`.toLowerCase().includes(search.toLowerCase()));
-  async function submit(event: FormEvent<HTMLFormElement>) { event.preventDefault(); setBusy(true); try { const data = Object.fromEntries(new FormData(event.currentTarget).entries()); await api("/api/contacts", { method: "POST", body: JSON.stringify(data) }); event.currentTarget.reset(); await onRefresh(); } finally { setBusy(false); } }
+  async function fillAddress(event: FocusEvent<HTMLInputElement>) {
+    const cep = event.currentTarget.value.replace(/\D/g, "");
+    if (cep.length !== 8) { if (cep) setCepStatus("Informe os 8 números do CEP."); return; }
+    const form = event.currentTarget.form;
+    if (!form) return;
+    setCepStatus("Buscando endereço...");
+    try {
+      const response = await fetch(`https://viacep.com.br/ws/${cep}/json/`);
+      const address = await response.json() as { erro?: boolean; logradouro?: string; bairro?: string; localidade?: string; uf?: string };
+      if (!response.ok || address.erro) throw new Error("CEP não encontrado.");
+      const set = (name: string, value = "") => { const field = form.elements.namedItem(name); if (field instanceof HTMLInputElement) field.value = value; };
+      set("addressLine", [address.logradouro, address.bairro].filter(Boolean).join(" · "));
+      set("city", address.localidade); set("state", address.uf);
+      event.currentTarget.value = cep.replace(/(\d{5})(\d{3})/, "$1-$2");
+      setCepStatus("Endereço preenchido. Complete com o número.");
+    } catch (reason) { setCepStatus(reason instanceof Error ? reason.message : "Não foi possível consultar o CEP."); }
+  }
+  async function submit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault(); setBusy(true); setClientNotice("");
+    const form = event.currentTarget;
+    const formData = new FormData(form);
+    const documents = formData.getAll("documents").filter((item): item is File => item instanceof File && item.size > 0);
+    const data = Object.fromEntries(formData.entries()); delete data.documents;
+    try {
+      const contact = await api<{ id: string }>("/api/contacts", { method: "POST", body: JSON.stringify(data) });
+      if (documents.length) { const upload = new FormData(); documents.forEach((file) => upload.append("documents", file)); await api(`/api/contacts/${contact.id}/documents`, { method: "POST", body: upload }); }
+      form.reset(); setCepStatus(""); setClientNotice(documents.length ? "Cliente e documentos salvos no Google Drive." : "Cliente salvo com sucesso."); await onRefresh();
+    } catch (reason) { setClientNotice(reason instanceof Error ? reason.message : "Não foi possível salvar o cliente."); }
+    finally { setBusy(false); }
+  }
   return (
-    <section className="page clients-page"><div className="page-heading"><div><h1>Cadastro de clientes</h1><p>O número de WhatsApp vincula o cadastro às conversas recebidas</p></div><SearchBox value={search} onChange={setSearch} placeholder="Buscar cliente" /></div><div className="clients-grid"><form className="card client-form" onSubmit={submit}><div className="form-title"><CircleUserRound size={32} /><div><h2>Novo cliente</h2><p>Campos com * são obrigatórios</p></div></div><span className="eyebrow">Dados pessoais</span><div className="form-grid"><Field label="Nome completo *" name="name" required /><Field label="WhatsApp *" name="phone" placeholder="5592999999999" required /><Field label="CPF *" name="cpf" placeholder="000.000.000-00" required /><Field label="RG · Órgão emissor" name="rg" /><Field label="Data de nascimento" name="birthDate" type="date" /><Field label="E-mail" name="email" type="email" /></div><span className="eyebrow">Endereço</span><div className="form-grid address"><Field label="Logradouro e número" name="addressLine" /><Field label="Cidade" name="city" /><Field label="UF" name="state" maxLength={2} /><Field label="CEP" name="postalCode" /></div><span className="eyebrow">Atendimento</span><div className="form-grid thirds"><Field label="Banco / Financeira" name="bank" /><label>Classificação inicial<select name="classification" defaultValue="warm"><option value="hot">Quente</option><option value="warm">Morno</option><option value="cold">Frio</option></select></label><Field label="CCB" name="ccb" /></div><label className="dropzone"><Paperclip /> <span>Documentos poderão ser anexados após salvar o cliente</span></label><div className="form-actions"><button type="reset" className="outline">Cancelar</button><button className="primary" disabled={busy}>{busy ? "Salvando..." : "Salvar cliente"}</button></div></form><aside className="card recent-card"><header><h2>Recentes</h2><span>{contacts.length} cadastrados</span></header>{visible.slice(0, 8).map((contact) => <div className="recent-person" key={contact.id}><Avatar name={contact.name} size="xs" /><span><strong>{contact.name ?? contact.phone}</strong><small>{contact.bank ?? "Sem banco informado"}</small></span><i /></div>)}{visible.length === 0 && <Empty text="Nenhum cliente encontrado." />}<div className="pending-box"><strong>{contacts.filter((item) => !item.profileComplete).length} contatos pendentes de cadastro</strong><span>Chegaram pelo WhatsApp sem ficha completa.</span></div></aside></div></section>
+    <section className="page clients-page"><div className="page-heading"><div><h1>Cadastro de clientes</h1><p>O número de WhatsApp vincula o cadastro às conversas recebidas</p></div><SearchBox value={search} onChange={setSearch} placeholder="Buscar cliente" /></div><div className="clients-grid"><form className="card client-form" onSubmit={submit}><div className="form-title"><CircleUserRound size={32} /><div><h2>Novo cliente</h2><p>Campos com * são obrigatórios</p></div></div><span className="eyebrow">Dados pessoais</span><div className="form-grid"><Field label="Nome completo *" name="name" required /><Field label="WhatsApp *" name="phone" placeholder="5592999999999" required /><Field label="CPF *" name="cpf" placeholder="000.000.000-00" required /><Field label="RG · Órgão emissor" name="rg" /><Field label="Data de nascimento" name="birthDate" type="date" /><Field label="E-mail" name="email" type="email" /></div><span className="eyebrow">Endereço</span><div className="form-grid address"><Field label="CEP" name="postalCode" inputMode="numeric" placeholder="00000-000" maxLength={9} onBlur={fillAddress} /><Field label="Logradouro, bairro e número" name="addressLine" /><Field label="Cidade" name="city" /><Field label="UF" name="state" maxLength={2} /></div>{cepStatus && <small className="cep-status">{cepStatus}</small>}<span className="eyebrow">Atendimento</span><div className="form-grid thirds"><Field label="Banco / Financeira" name="bank" /><label>Classificação inicial<select name="classification" defaultValue="warm"><option value="hot">Quente</option><option value="warm">Morno</option><option value="cold">Frio</option></select></label><Field label="CCB" name="ccb" /></div>{googleDrive ? <label className="dropzone"><Paperclip /> <span>Selecionar documentos para salvar no Google Drive</span><input name="documents" type="file" multiple /></label> : <div className="dropzone drive-pending"><Paperclip /> <span>Google Drive aguardando configuração do administrador</span></div>}{clientNotice && <div className="client-notice">{clientNotice}</div>}<div className="form-actions"><button type="reset" className="outline">Cancelar</button><button className="primary" disabled={busy}>{busy ? "Salvando..." : "Salvar cliente"}</button></div></form><aside className="card recent-card"><header><h2>Recentes</h2><span>{contacts.length} cadastrados</span></header>{visible.slice(0, 8).map((contact) => <div className="recent-person" key={contact.id}><Avatar name={contact.name} size="xs" /><span><strong>{contact.name ?? contact.phone}</strong><small>{contact.bank ?? "Sem banco informado"}</small></span><i /></div>)}{visible.length === 0 && <Empty text="Nenhum cliente encontrado." />}<div className="pending-box"><strong>{contacts.filter((item) => !item.profileComplete).length} contatos pendentes de cadastro</strong><span>Chegaram pelo WhatsApp sem ficha completa.</span></div></aside></div></section>
   );
 }
 
-type SettingsModal = { kind: "create" | "password" | "delete" | "email"; user?: ManagedUser } | null;
+type SettingsModal = { kind: "password" | "delete" | "email"; user?: ManagedUser } | null;
 const accessLabels: Array<{ key: keyof Permissions; label: string }> = [
-  { key: "chat", label: "Chat" }, { key: "leads", label: "Leads" }, { key: "clients", label: "Clientes" }, { key: "settings", label: "Configurações" },
+  { key: "chat", label: "Chat" }, { key: "leads", label: "Leads" }, { key: "clients", label: "Clientes" },
 ];
 
 function SettingsPage({ currentUser }: { currentUser: User }) {
@@ -442,7 +533,13 @@ function SettingsPage({ currentUser }: { currentUser: User }) {
     const data = await api<{ users: ManagedUser[] }>("/api/settings/users");
     setUsers(data.users);
   }, []);
-  useEffect(() => void loadUsers(), [loadUsers]);
+  useEffect(() => {
+    void loadUsers();
+    const refresh = () => { if (document.visibilityState === "visible") void loadUsers(); };
+    const timer = window.setInterval(refresh, 2 * 60 * 1000);
+    document.addEventListener("visibilitychange", refresh);
+    return () => { window.clearInterval(timer); document.removeEventListener("visibilitychange", refresh); };
+  }, [loadUsers]);
 
   function open(next: SettingsModal) { setError(""); setNotice(""); setModal(next); }
   async function updateAccess(user: ManagedUser, patch: { active?: boolean; permission?: keyof Permissions }) {
@@ -454,17 +551,6 @@ function SettingsPage({ currentUser }: { currentUser: User }) {
       await api(`/api/settings/users/${user.id}/access`, { method: "PATCH", body: JSON.stringify({ active: next.active, permissions: next.permissions }) });
       setNotice("Acessos atualizados no banco.");
     } catch (reason) { await loadUsers(); setError(reason instanceof Error ? reason.message : "Não foi possível atualizar os acessos."); }
-  }
-
-  async function create(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault(); setBusy(true); setError("");
-    const data = new FormData(event.currentTarget);
-    const permissions = Object.fromEntries(accessLabels.map(({ key }) => [key, data.get(key) === "on"]));
-    try {
-      await api("/api/settings/users", { method: "POST", body: JSON.stringify({ name: data.get("name"), email: data.get("email"), permissions }) });
-      await loadUsers(); setModal(null); setNotice("Convite enviado. O usuário deve confirmar o e-mail e criar a própria senha.");
-    } catch (reason) { setError(reason instanceof Error ? reason.message : "Não foi possível criar o usuário."); }
-    finally { setBusy(false); }
   }
 
   async function changeOwnPassword(event: FormEvent<HTMLFormElement>) {
@@ -493,19 +579,19 @@ function SettingsPage({ currentUser }: { currentUser: User }) {
   }
 
   return <section className="page settings-page">
-    <div className="page-heading settings-heading"><div><span className="eyebrow">Administração</span><h1>Configurações</h1><p>Gerencie segurança, usuários e acessos por área.</p></div><button className="primary" onClick={() => open({ kind: "create" })}><UserPlus size={17} /> Novo usuário</button></div>
+    <div className="page-heading settings-heading"><div><span className="eyebrow">Administração</span><h1>Configurações</h1><p>Gerencie segurança, usuários, presença e acessos por área.</p></div></div>
     {notice && <div className="notice success">{notice}</div>}{error && !modal && <div className="notice error">{error}</div>}
     <div className="settings-overview">
-      <div className="card security-card"><div className="settings-icon"><ShieldCheck /></div><div><span className="eyebrow">Minha conta</span><h2>{currentUser.name}</h2><p>{currentUser.email} · {currentUser.role === "admin" ? "Administrador mestre" : "Acesso administrativo"}</p></div><button className="outline" onClick={() => open({ kind: "password" })}><KeyRound size={16} /> Alterar minha senha</button></div>
+      <div className="card security-card"><Avatar name={currentUser.name} imageUrl={currentUser.avatarUrl} /><div><span className="eyebrow">Minha conta</span><h2>{currentUser.name}</h2><p>{currentUser.email} · Administrador mestre</p></div><button className="outline" onClick={() => open({ kind: "password" })}><KeyRound size={16} /> Alterar minha senha</button></div>
       <div className="card access-summary"><span className="eyebrow">Equipe</span><strong>{users.filter((user) => user.active).length}</strong><p>usuários ativos</p><small>{users.length} contas cadastradas</small></div>
     </div>
+    <div className="card online-team"><header><div><span className="eyebrow">Presença agora</span><h2>Equipe online</h2></div><strong>{users.filter((user) => user.online).length}</strong></header><div className="online-team-list">{users.filter((user) => user.online).map((user) => <div key={user.id}><Avatar name={user.name} imageUrl={user.avatarUrl} size="sm" online /><span><strong>{user.name}</strong><small>{user.professionalRole ?? "Equipe Karrer"}{user.instagram ? ` · ${user.instagram}` : ""}</small></span></div>)}{!users.some((user) => user.online) && <p>Nenhum usuário online neste momento.</p>}</div></div>
     <div className="card users-card"><div className="users-card-head"><div><h2>Usuários e permissões</h2><p>Os toggles são aplicados imediatamente no banco e validados pela API.</p></div></div>
       <div className="users-table users-table-head"><span>Usuário</span><span>Status</span>{accessLabels.map(({ key, label }) => <span key={key}>{label}</span>)}<span>Ações</span></div>
-      {users.map((user) => <div className={`users-table ${user.active ? "" : "disabled-user"}`} key={user.id}><div className="managed-person"><Avatar name={user.name} size="sm" /><span><strong>{user.name}{user.id === currentUser.id && <em>Você</em>}{!user.emailVerified && <em className="pending-verification">Convite pendente</em>}</strong><small>{user.email}</small></span></div><div><Toggle checked={user.active} disabled={user.role === "admin"} label="Usuário ativo" onChange={(checked) => void updateAccess(user, { active: checked })} /></div>{accessLabels.map(({ key }) => <div key={key}><Toggle checked={user.permissions[key]} disabled={user.role === "admin" || !user.active} label={`Acesso a ${key}`} onChange={() => void updateAccess(user, { permission: key })} /></div>)}<div className="user-actions"><button title="Enviar redefinição de senha" disabled={!user.emailVerified} onClick={() => open({ kind: "email", user })}><Mail size={16} /></button><button className="danger-icon" title="Excluir usuário" disabled={user.role === "admin" || user.id === currentUser.id} onClick={() => open({ kind: "delete", user })}><Trash2 size={16} /></button></div></div>)}
+      {users.map((user) => <div className={`users-table ${user.active ? "" : "disabled-user"}`} key={user.id}><div className="managed-person"><Avatar name={user.name} imageUrl={user.avatarUrl} size="sm" /><span><strong>{user.name}{user.id === currentUser.id && <em>Você</em>}{!user.emailVerified && <em className="pending-verification">E-mail pendente</em>}</strong><small>{user.email}</small><small>{user.professionalRole ?? "Administrador"}{user.instagram ? ` · ${user.instagram}` : ""}</small></span></div><div className="presence-control"><span className={`presence-badge ${user.online ? "online" : ""}`}><i />{user.online ? "Online" : "Offline"}</span><Toggle checked={user.active} disabled={user.role === "admin"} label="Usuário ativo" onChange={(checked) => void updateAccess(user, { active: checked })} /></div>{accessLabels.map(({ key }) => <div key={key}><Toggle checked={user.permissions[key]} disabled={user.role === "admin" || !user.active} label={`Acesso a ${key}`} onChange={() => void updateAccess(user, { permission: key })} /></div>)}<div className="user-actions"><button title="Enviar redefinição de senha" disabled={!user.emailVerified} onClick={() => open({ kind: "email", user })}><Mail size={16} /></button><button className="danger-icon" title="Excluir usuário" disabled={user.role === "admin" || user.id === currentUser.id} onClick={() => open({ kind: "delete", user })}><Trash2 size={16} /></button></div></div>)}
       {!users.length && <Empty text="Nenhum usuário cadastrado." />}
     </div>
 
-    {modal?.kind === "create" && <Modal title="Convidar novo usuário" subtitle="Ele receberá um código de confirmação e criará a própria senha." onClose={() => setModal(null)}><form className="modal-form" onSubmit={create}><Field label="Nome completo" name="name" required /><Field label="E-mail profissional" name="email" type="email" required /><fieldset><legend>Acessos liberados</legend>{accessLabels.map(({ key, label }, index) => <label className="permission-option" key={key}><span><strong>{label}</strong><small>{key === "settings" ? "Gerenciar equipe e segurança" : `Visualizar e operar ${label.toLowerCase()}`}</small></span><Toggle name={key} defaultChecked={index < 2} label={label} /></label>)}</fieldset>{error && <p className="form-error">{error}</p>}<div className="modal-actions"><button type="button" className="outline" onClick={() => setModal(null)}>Cancelar</button><button className="primary" disabled={busy}>{busy ? "Enviando convite..." : "Enviar convite"}</button></div></form></Modal>}
     {modal?.kind === "password" && <Modal title="Alterar minha senha" subtitle="As outras sessões abertas serão encerradas." onClose={() => setModal(null)}><form className="modal-form" onSubmit={changeOwnPassword}><Field label="Senha atual" name="currentPassword" type="password" required /><Field label="Nova senha" name="newPassword" type="password" minLength={10} required /><Field label="Confirmar nova senha" name="confirmation" type="password" minLength={10} required />{error && <p className="form-error">{error}</p>}<div className="modal-actions"><button type="button" className="outline" onClick={() => setModal(null)}>Cancelar</button><button className="primary" disabled={busy}>{busy ? "Salvando..." : "Alterar senha"}</button></div></form></Modal>}
     {modal?.kind === "delete" && modal.user && <Modal title="Excluir usuário?" subtitle={`O acesso de ${modal.user.name} será removido permanentemente.`} tone="danger" onClose={() => setModal(null)}>{error && <p className="form-error">{error}</p>}<div className="modal-actions"><button className="outline" onClick={() => setModal(null)}>Cancelar</button><button className="danger-button" disabled={busy} onClick={() => void removeUser()}>{busy ? "Excluindo..." : "Excluir usuário"}</button></div></Modal>}
     {modal?.kind === "email" && modal.user && <Modal title="Enviar redefinição?" subtitle={`Enviaremos um link seguro para ${modal.user.email}. O link expira em 30 minutos.`} onClose={() => setModal(null)}>{error && <p className="form-error">{error}</p>}<div className="modal-actions"><button className="outline" onClick={() => setModal(null)}>Cancelar</button><button className="primary" disabled={busy} onClick={() => void emailReset()}>{busy ? "Enviando..." : "Enviar e-mail"}</button></div></Modal>}
@@ -524,7 +610,7 @@ function Modal({ title, subtitle, tone, onClose, children }: { title: string; su
 
 function ConversationRow({ conversation, active, onClick }: { conversation: Conversation; active: boolean; onClick: () => void }) { return <button className={`conversation-row ${active ? "active" : ""}`} onClick={onClick}><Avatar name={conversation.name} online={conversation.online} size="sm" /><span><strong>{conversation.name}</strong><small>{conversation.lastMessageType === "audio" ? "Áudio" : conversation.lastMessage ?? conversation.stage}</small></span><time>{formatTime(conversation.lastMessageAt)}{conversation.unreadCount > 0 && <b>{conversation.unreadCount}</b>}</time></button>; }
 function Brand() { return <div className="brand"><img src="/karrer-logo.png" alt="Karrer & Advogados" /></div>; }
-function Avatar({ name, online, size = "md" }: { name: string | null; online?: boolean; size?: "xs" | "sm" | "md" }) { return <div className={`avatar ${size}`}>{initials(name)}{online && <i />}</div>; }
+function Avatar({ name, imageUrl, online, size = "md" }: { name: string | null; imageUrl?: string | null; online?: boolean; size?: "xs" | "sm" | "md" }) { return <div className={`avatar ${size}`}>{imageUrl ? <img src={imageUrl} alt={`Foto de ${name ?? "usuário"}`} loading="lazy" /> : initials(name)}{online && <i />}</div>; }
 function ClassificationBadge({ value }: { value: Classification }) { return <span className={`badge ${value}`}>Lead {classificationLabel[value].toLowerCase()}</span>; }
 function SearchBox({ value, onChange, placeholder }: { value: string; onChange: (value: string) => void; placeholder: string }) { return <label className="search-box"><Search size={16} /><input value={value} onChange={(event) => onChange(event.target.value)} placeholder={placeholder} /></label>; }
 function Chip({ active, onClick, children }: { active: boolean; onClick: () => void; children: React.ReactNode }) { return <button className={`chip ${active ? "active" : ""}`} onClick={onClick}>{children}</button>; }

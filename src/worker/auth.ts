@@ -35,6 +35,7 @@ async function passwordHash(password: string, salt: Uint8Array, iterations = ITE
 }
 
 type UserRow = Omit<SessionUser, "permissions"> & {
+  avatarKey: string | null;
   canChat: number;
   canLeads: number;
   canClients: number;
@@ -48,6 +49,8 @@ function sessionUser(row: UserRow): SessionUser {
     name: row.name,
     email: row.email,
     role: row.role,
+    avatarUrl: row.avatarKey ? "/api/account/avatar" : null,
+    professionalRole: row.professionalRole,
     permissions: {
       chat: elevated || Boolean(row.canChat),
       leads: elevated || Boolean(row.canLeads),
@@ -78,7 +81,7 @@ export async function currentUser(request: Request, env: AppEnv): Promise<Sessio
   if (!token) return null;
   const tokenHash = await digest(token);
   const row = await env.DB.prepare(`
-    SELECT u.id, u.name, u.email, u.role, u.can_chat AS canChat, u.can_leads AS canLeads,
+    SELECT u.id, u.name, u.email, u.role, u.avatar_key AS avatarKey, u.professional_role AS professionalRole, u.can_chat AS canChat, u.can_leads AS canLeads,
       u.can_clients AS canClients, u.can_settings AS canSettings
     FROM sessions s JOIN users u ON u.id = s.user_id
     WHERE s.token_hash = ?1 AND s.expires_at > ?2 AND u.active = 1 AND u.email_verified = 1
@@ -100,6 +103,10 @@ export function requireAnyPermission(user: SessionUser, permissions: Array<keyof
   if (!permissions.some((permission) => user.permissions[permission])) throw new HttpError("Você não tem acesso a esta área.", 403);
 }
 
+export function requireAdmin(user: SessionUser): void {
+  if (user.role !== "admin") throw new HttpError("Acesso exclusivo do administrador.", 403);
+}
+
 async function createSession(userId: string, env: AppEnv): Promise<{ cookie: string }> {
   const token = bytesToBase64(crypto.getRandomValues(new Uint8Array(32)));
   const tokenHash = await digest(token);
@@ -109,9 +116,13 @@ async function createSession(userId: string, env: AppEnv): Promise<{ cookie: str
   return { cookie: `${SESSION_COOKIE}=${encodeURIComponent(token)}; Path=/; HttpOnly; Secure; SameSite=Strict; Max-Age=43200` };
 }
 
-export async function authStatus(request: Request, env: AppEnv): Promise<{ setupRequired: boolean; user: SessionUser | null }> {
+export async function authStatus(request: Request, env: AppEnv) {
   const count = await env.DB.prepare("SELECT COUNT(*) AS total FROM users").first<{ total: number }>();
-  return { setupRequired: Number(count?.total ?? 0) === 0, user: await currentUser(request, env) };
+  return {
+    setupRequired: Number(count?.total ?? 0) === 0,
+    user: await currentUser(request, env),
+    features: { googleDrive: Boolean(env.GOOGLE_SERVICE_ACCOUNT_EMAIL && env.GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY && env.GOOGLE_DRIVE_FOLDER_ID) },
+  };
 }
 
 export async function bootstrap(request: Request, env: AppEnv): Promise<{ user: SessionUser; cookie: string }> {
@@ -124,7 +135,7 @@ export async function bootstrap(request: Request, env: AppEnv): Promise<{ user: 
   const name = cleanText(input.name, 120, true)!;
   const email = cleanText(input.email, 180, true)!.toLowerCase();
   const password = await passwordRecord(input.password);
-  const user: SessionUser = { id: crypto.randomUUID(), name, email, role: "admin", permissions: { chat: true, leads: true, clients: true, settings: true } };
+  const user: SessionUser = { id: crypto.randomUUID(), name, email, role: "admin", avatarUrl: null, professionalRole: "Administrador", permissions: { chat: true, leads: true, clients: true, settings: true } };
   await env.DB.prepare(`INSERT INTO users
     (id, name, email, password_hash, password_salt, password_iterations, role, can_chat, can_leads, can_clients, can_settings, email_verified)
     VALUES (?1, ?2, ?3, ?4, ?5, ?6, 'admin', 1, 1, 1, 1, 1)`)
@@ -137,7 +148,7 @@ export async function login(request: Request, env: AppEnv): Promise<{ user: Sess
   const input = await readJson<{ email?: unknown; password?: unknown }>(request);
   const email = cleanText(input.email, 180, true)!.toLowerCase();
   const password = cleanText(input.password, 256, true)!;
-  const row = await env.DB.prepare(`SELECT id, name, email, role, password_hash, password_salt, password_iterations,
+  const row = await env.DB.prepare(`SELECT id, name, email, role, avatar_key AS avatarKey, professional_role AS professionalRole, password_hash, password_salt, password_iterations,
     can_chat AS canChat, can_leads AS canLeads, can_clients AS canClients, can_settings AS canSettings
     FROM users WHERE email = ?1 AND active = 1 AND email_verified = 1`)
     .bind(email).first<UserRow & { password_hash: string; password_salt: string; password_iterations: number }>();
@@ -197,22 +208,34 @@ export async function activateUser(request: Request, env: AppEnv): Promise<void>
   const email = cleanText(input.email, 180, true)!.toLowerCase();
   const code = cleanText(input.code, 6, true)!;
   if (!/^\d{6}$/.test(code)) throw new HttpError("Informe o código de 6 dígitos.", 422);
-  const row = await env.DB.prepare(`SELECT c.id, c.user_id AS userId, c.code_hash AS codeHash, c.attempts
+  const row = await env.DB.prepare(`SELECT c.id, c.user_id AS userId, c.code_hash AS codeHash, c.attempts,
+      u.registration_source AS registrationSource
     FROM user_access_codes c JOIN users u ON u.id = c.user_id
-    WHERE u.email = ?1 AND u.active = 1 AND u.email_verified = 0 AND c.used_at IS NULL AND c.expires_at > ?2
+    WHERE u.email = ?1 AND u.email_verified = 0 AND c.used_at IS NULL AND c.expires_at > ?2
     ORDER BY c.created_at DESC LIMIT 1`)
-    .bind(email, new Date().toISOString()).first<{ id: string; userId: string; codeHash: string; attempts: number }>();
+    .bind(email, new Date().toISOString()).first<{ id: string; userId: string; codeHash: string; attempts: number; registrationSource: "admin" | "self" }>();
   if (!row || row.attempts >= 5) throw new HttpError("Código inválido ou expirado.", 422);
   if (!(await safeEqual(await digest(code), row.codeHash))) {
     await env.DB.prepare("UPDATE user_access_codes SET attempts = attempts + 1 WHERE id = ?1").bind(row.id).run();
     throw new HttpError("Código inválido ou expirado.", 422);
   }
-  const password = await passwordRecord(input.password);
   const now = new Date().toISOString();
+  const userUpdate = row.registrationSource === "admin"
+    ? await passwordRecord(input.password)
+    : null;
   await env.DB.batch([
-    env.DB.prepare(`UPDATE users SET password_hash = ?1, password_salt = ?2, password_iterations = ?3,
-      email_verified = 1, updated_at = ?4 WHERE id = ?5`)
-      .bind(password.hash, password.salt, password.iterations, now, row.userId),
+    userUpdate
+      ? env.DB.prepare(`UPDATE users SET password_hash = ?1, password_salt = ?2, password_iterations = ?3,
+          email_verified = 1, active = 1, updated_at = ?4 WHERE id = ?5`)
+        .bind(userUpdate.hash, userUpdate.salt, userUpdate.iterations, now, row.userId)
+      : env.DB.prepare("UPDATE users SET email_verified = 1, active = 1, updated_at = ?1 WHERE id = ?2").bind(now, row.userId),
     env.DB.prepare("UPDATE user_access_codes SET used_at = ?1 WHERE id = ?2").bind(now, row.id),
   ]);
+}
+
+export async function touchPresence(request: Request, env: AppEnv, user: SessionUser): Promise<void> {
+  const token = cookieValue(request, SESSION_COOKIE);
+  if (!token) return;
+  await env.DB.prepare("UPDATE sessions SET last_seen_at = ?1 WHERE user_id = ?2 AND token_hash = ?3")
+    .bind(new Date().toISOString(), user.id, await digest(token)).run();
 }

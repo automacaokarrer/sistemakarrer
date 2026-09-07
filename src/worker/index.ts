@@ -1,4 +1,4 @@
-import { activateUser, authStatus, bootstrap, changePassword, login, logout, requireAnyPermission, requirePermission, requireUser, resetPassword } from "./auth";
+import { activateUser, authStatus, bootstrap, changePassword, login, logout, requireAdmin, requireAnyPermission, requirePermission, requireUser, resetPassword, touchPresence } from "./auth";
 export { ChatRoom } from "./chat-room";
 import { HttpError, error, json, routeMatch } from "./http";
 import {
@@ -15,7 +15,8 @@ import {
 } from "./repository";
 import type { AppEnv } from "./types";
 import { handleZApiWebhook } from "./webhook";
-import { createUser, deleteUser, listUsers, sendPasswordReset, updateUserAccess } from "./settings";
+import { createUser, deleteUser, getUserAvatar, listUsers, registerUser, sendPasswordReset, updateUserAccess } from "./settings";
+import { uploadContactDocuments } from "./drive";
 
 function withCookie(payload: unknown, cookie: string, status = 200): Response {
   return json(payload, { status, headers: { "Set-Cookie": cookie } });
@@ -49,21 +50,27 @@ async function routeApi(request: Request, env: AppEnv): Promise<Response> {
     await activateUser(request, env);
     return json({ ok: true });
   }
+  if (method === "POST" && pathname === "/api/auth/register") return registerUser(request, env);
 
   const webhook = routeMatch(pathname, /^\/api\/webhooks\/zapi\/([^/]+)$/);
   if (method === "POST" && webhook) return handleZApiWebhook(request, env, decodeURIComponent(webhook[1]));
 
   const user = await requireUser(request, env);
+  if (method === "POST" && pathname === "/api/auth/presence") {
+    await touchPresence(request, env, user);
+    return json({ ok: true });
+  }
+  if (method === "GET" && pathname === "/api/account/avatar") return getUserAvatar(env, user.id);
   if (method === "POST" && pathname === "/api/settings/change-password") {
     await changePassword(request, env, user);
     return json({ ok: true });
   }
   if (method === "GET" && pathname === "/api/settings/users") {
-    requirePermission(user, "settings");
+    requireAdmin(user);
     return listUsers(env);
   }
   if (method === "POST" && pathname === "/api/settings/users") {
-    requirePermission(user, "settings");
+    requireAdmin(user);
     return createUser(request, env, user);
   }
   if (method === "GET" && pathname === "/api/conversations") {
@@ -91,6 +98,12 @@ async function routeApi(request: Request, env: AppEnv): Promise<Response> {
   if (method === "GET" && media) {
     requireAnyPermission(user, ["chat", "clients"]);
     return getMedia(env, decodeURIComponent(media[1]));
+  }
+
+  const contactDocuments = routeMatch(pathname, /^\/api\/contacts\/([^/]+)\/documents$/);
+  if (method === "POST" && contactDocuments) {
+    requirePermission(user, "clients");
+    return uploadContactDocuments(request, env, user, contactDocuments[1]);
   }
 
   const messages = routeMatch(pathname, /^\/api\/conversations\/([^/]+)\/messages$/);
@@ -123,17 +136,22 @@ async function routeApi(request: Request, env: AppEnv): Promise<Response> {
 
   const userAccess = routeMatch(pathname, /^\/api\/settings\/users\/([^/]+)\/access$/);
   if (method === "PATCH" && userAccess) {
-    requirePermission(user, "settings");
+    requireAdmin(user);
     return updateUserAccess(request, env, user, userAccess[1]);
+  }
+  const userAvatar = routeMatch(pathname, /^\/api\/settings\/users\/([^/]+)\/avatar$/);
+  if (method === "GET" && userAvatar) {
+    requireAdmin(user);
+    return getUserAvatar(env, userAvatar[1]);
   }
   const userReset = routeMatch(pathname, /^\/api\/settings\/users\/([^/]+)\/send-password-reset$/);
   if (method === "POST" && userReset) {
-    requirePermission(user, "settings");
+    requireAdmin(user);
     return sendPasswordReset(request, env, user, userReset[1]);
   }
   const managedUser = routeMatch(pathname, /^\/api\/settings\/users\/([^/]+)$/);
   if (method === "DELETE" && managedUser) {
-    requirePermission(user, "settings");
+    requireAdmin(user);
     return deleteUser(env, user, managedUser[1]);
   }
 
