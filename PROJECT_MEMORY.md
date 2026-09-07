@@ -81,9 +81,96 @@ npm.cmd run build
 
 - A migração `migrations/0004_user_profiles.sql` adiciona perfis, origem do cadastro, índice de presença e documentos dos clientes.
 - Ela já estava aplicada no D1 remoto na última verificação.
-- Antes de um novo deploy, executar testes, typecheck e build.
-- Comando de publicação: `npm.cmd run deploy`.
-- Após publicar, validar `https://crmkarrer.com.br/api/auth/status` e abrir a tela pública em Chromium.
+
+### Runbook de deploy no Cloudflare
+
+1. Confirmar que o destino em `wrangler.jsonc` é o Worker `karrer-atendimento`, o D1 `karrer-atendimento-db` e o domínio `crmkarrer.com.br`.
+2. Confirmar a conta autenticada sem imprimir tokens:
+
+   ```powershell
+   npx.cmd wrangler whoami
+   ```
+
+3. Consultar as migrações remotas:
+
+   ```powershell
+   npx.cmd wrangler d1 migrations list karrer-atendimento-db --remote
+   ```
+
+4. Se houver migração pendente, aplicá-la antes do Worker:
+
+   ```powershell
+   npm.cmd run db:migrate:remote
+   ```
+
+5. Executar toda a validação local:
+
+   ```powershell
+   npm.cmd test
+   npm.cmd run typecheck
+   npm.cmd run test:e2e
+   npm.cmd run build
+   ```
+
+6. Publicar:
+
+   ```powershell
+   npm.cmd run deploy
+   ```
+
+7. Guardar no histórico o `Current Version ID` informado pelo Wrangler.
+8. Validar a produção:
+
+   ```powershell
+   curl.exe -sS -D - https://crmkarrer.com.br/api/auth/status
+   ```
+
+9. Abrir `https://crmkarrer.com.br` com Playwright/Chromium e confirmar HTTP 200, título `Karrer | Atendimento` e a tela esperada.
+10. Atualizar neste arquivo o ID da versão, o commit correspondente, o resultado da validação e o próximo passo.
+
+Observações:
+
+- O `prebuild` gera a configuração redirecionada que o Wrangler usa a partir de `dist/karrer_atendimento/wrangler.json`.
+- Um aviso isolado de falha ao gravar logs do Wrangler fora do workspace não invalida o build quando o processo termina com código zero.
+- Segredos de produção são gerenciados pelo Cloudflare e nunca devem entrar no Git.
+- Para conferir somente os nomes dos secrets já configurados, usar `npx.cmd wrangler secret list`.
+
+### Runbook de commit e push no GitHub
+
+O destino obrigatório é:
+
+- Owner: `automacaokarrer`.
+- Repositório: `sistemakarrer`.
+- Remote: `https://github.com/automacaokarrer/sistemakarrer.git`.
+- Branch: `main`.
+
+Procedimento:
+
+1. Ler `git status --short` e preservar alterações do usuário que não pertençam à tarefa.
+2. Executar `git diff --check` e revisar o diff. Confirmar que `.env`, tokens, senhas e chaves privadas não estão sendo versionados.
+3. Adicionar somente os arquivos da tarefa com `git add -- <arquivos>`.
+4. Criar um commit descritivo.
+5. Fazer o push para `origin main`.
+6. Confirmar que `HEAD` e `origin/main` apontam para o mesmo SHA e que o working tree está limpo.
+
+Autenticação:
+
+- A fonte correta é o `GITHUB_TOKEN` do `.env`, associado à conta institucional `automacaokarrer`.
+- `GITHUB_OWNER` e `GITHUB_REPOSITORY` no `.env` definem o escopo autorizado.
+- Nunca imprimir o token, colocá-lo na URL remota ou persistir seu valor no `.git/config`.
+- A credencial global do Windows pode selecionar a conta pessoal `maninhocriativos` e causar HTTP 403. Essa conta não deve ser usada neste projeto.
+- Quando a credencial global interferir, ler o token autorizado do `.env` apenas em memória e fornecer um cabeçalho HTTP temporário somente ao processo `git push`. O valor deve desaparecer quando o processo terminar.
+- Antes de diagnosticar permissões, a API do GitHub pode ser consultada com o token em memória para confirmar apenas `login`, visibilidade do repositório e permissões booleanas; nunca retornar cabeçalhos ou o token.
+
+Verificação final:
+
+```powershell
+git status --short
+git rev-parse HEAD
+git rev-parse origin/main
+```
+
+Deploy e push são operações diferentes: o deploy publica os arquivos locais no Cloudflare; o push registra o código no GitHub. Sempre concluir e verificar ambos quando o pedido for publicar tudo.
 
 ## Próximo passo conhecido
 
