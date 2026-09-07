@@ -21,8 +21,8 @@ Este arquivo registra decisões, estado de produção e procedimentos importante
 - D1: `karrer-atendimento-db`.
 - R2: `karrer-atendimento-media`.
 - Durable Object: `ChatRoom`.
-- Última versão Cloudflare validada nesta data: `c0755d83-8d36-4eeb-9896-bb911bec29dc`.
-- Commit correspondente: `84a76d34c96fe7144cde6ebb691ee000c362607d`.
+- Última versão Cloudflare validada nesta data: `1fd5f9aa-a362-4ca6-9fcb-45288ea4c41c`.
+- Commit de código correspondente: `e609ee4`.
 - A URL pública e `/api/auth/status` responderam HTTP 200 após o deploy.
 
 ## Funcionalidades implementadas
@@ -178,5 +178,5 @@ Deploy e push são operações diferentes: o deploy publica os arquivos locais n
 - O design de Leads foi aplicado ao Cadastro de Clientes com hero bege, quatro KPIs, contorno amarelo, cartões, hierarquia e responsividade equivalentes.
 - O formulário de clientes ganhou feedback correto de sucesso/erro, contador de documentos, autocomplete e limpeza integral de estados.
 - O Playwright agora usa exclusivamente a porta `5197` com `strictPort` e não reutiliza servidores de outros projetos.
-- Essas alterações ainda precisam ser publicadas após aprovação do usuário.
+- Essas alterações foram publicadas e validadas em produção na versão `1fd5f9aa-a362-4ca6-9fcb-45288ea4c41c`.
 - Continua pendente configurar no Cloudflare os três secrets do Google Drive usando as credenciais da conta de serviço institucional da Karrer e repetir o deploy e o teste de upload.
