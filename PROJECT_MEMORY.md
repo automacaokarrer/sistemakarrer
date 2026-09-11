@@ -21,8 +21,8 @@ Este arquivo registra decisões, estado de produção e procedimentos importante
 - D1: `karrer-atendimento-db`.
 - R2: `karrer-atendimento-media`.
 - Durable Object: `ChatRoom`.
-- Última versão Cloudflare validada nesta data: `27595595-c054-4584-9ba0-16520185d1f6`.
-- Commit de código correspondente: `0a3b5b0`.
+- Última versão Cloudflare validada nesta data: `5792222f-33c2-4b67-a96c-595f17439446`.
+- Commit de código correspondente: `5e97650`.
 - O endpoint protegido do webhook Z-API respondeu corretamente após o deploy.
 
 ## Funcionalidades implementadas
@@ -45,8 +45,10 @@ Este arquivo registra decisões, estado de produção e procedimentos importante
 - As credenciais foram aceitas pelos endpoints oficiais de status e dados da instância em 11 de setembro de 2026.
 - Os callbacks HTTPS de recebimento, confirmação de envio e status de mensagem apontam para o endpoint protegido do CRM e foram confirmados pela API.
 - O Worker trata `ReceivedCallback`, `DeliveryCallback` e `MessageStatusCallback`, incluindo atualizações de status em lote.
+- Quando um envio é recusado por diferença no formato brasileiro do número, o Worker consulta o número canônico confirmado pelo WhatsApp e repete uma única vez.
 - A opção de notificar mensagens enviadas pelo próprio aparelho permanece desativada para evitar duplicidade com envios originados pelo CRM.
 - A instância está no plano `TRIAL`; a instância e o aparelho institucional estavam conectados na validação final de 11 de setembro de 2026.
+- Um envio controlado para um número autorizado foi aceito pela Z-API após usar o formato canônico retornado pela própria plataforma.
 - Nunca registrar os valores das credenciais nem a URL completa do webhook, pois ela contém um token de autenticação.
 
 ## Google Drive — conta institucional da Karrer
@@ -85,7 +87,7 @@ npm.cmd run test:e2e
 npm.cmd run build
 ```
 
-Último resultado registrado: 13 testes unitários e 4 testes E2E aprovados, typecheck e build aprovados.
+Último resultado registrado: 14 testes unitários e 4 testes E2E aprovados, typecheck e build aprovados.
 
 ## Migrações e deploy
 
@@ -184,7 +186,7 @@ Deploy e push são operações diferentes: o deploy publica os arquivos locais n
 
 ## Próximo passo conhecido
 
-- Executar um teste controlado de envio e recebimento com um número autorizado e confirmar a atualização de status no chat do CRM.
+- Confirmar o recebimento da mensagem de teste, responder pelo número autorizado e verificar a entrada e a atualização de status no chat do CRM.
 - A página de Leads foi aprimorada localmente sem alterar sua identidade visual: o filtro de hora de entrada agora funciona de fato, os controles receberam rótulos acessíveis e os estados vazios ficaram contextuais.
 - O design de Leads foi aplicado ao Cadastro de Clientes com hero bege, quatro KPIs, contorno amarelo, cartões, hierarquia e responsividade equivalentes.
 - O formulário de clientes ganhou feedback correto de sucesso/erro, contador de documentos, autocomplete e limpeza integral de estados.
