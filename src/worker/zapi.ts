@@ -3,6 +3,19 @@ import type { AppEnv, ZApiPayload } from "./types";
 
 export type ZApiMessageStatus = "sent" | "delivered" | "read" | "failed";
 
+interface ZApiPhoneLookup {
+  exists?: boolean;
+  phone?: string;
+}
+
+function postText(endpoint: string, clientToken: string, phone: string, message: string): Promise<Response> {
+  return fetch(endpoint, {
+    method: "POST",
+    headers: { "Client-Token": clientToken, "Content-Type": "application/json" },
+    body: JSON.stringify({ phone, message }),
+  });
+}
+
 export function normalizeStatusUpdate(payload: ZApiPayload): Array<{ messageId: string; status: ZApiMessageStatus }> | null {
   const type = payload.type?.toLowerCase();
   if (type === "deliverycallback" && payload.messageId) {
@@ -27,12 +40,22 @@ export async function sendText(env: AppEnv, phone: string, message: string): Pro
     if (env.ENVIRONMENT === "development") return `local-${crypto.randomUUID()}`;
     throw new HttpError("Integração Z-API ainda não configurada.", 503);
   }
-  const endpoint = `https://api.z-api.io/instances/${encodeURIComponent(env.ZAPI_INSTANCE_ID)}/token/${encodeURIComponent(env.ZAPI_INSTANCE_TOKEN)}/send-text`;
-  const response = await fetch(endpoint, {
-    method: "POST",
-    headers: { "Client-Token": env.ZAPI_CLIENT_TOKEN, "Content-Type": "application/json" },
-    body: JSON.stringify({ phone, message }),
-  });
+  const baseUrl = `https://api.z-api.io/instances/${encodeURIComponent(env.ZAPI_INSTANCE_ID)}/token/${encodeURIComponent(env.ZAPI_INSTANCE_TOKEN)}`;
+  const normalizedPhone = normalizePhone(phone);
+  let response = await postText(`${baseUrl}/send-text`, env.ZAPI_CLIENT_TOKEN, normalizedPhone, message);
+  if (response.status === 400) {
+    const lookupResponse = await fetch(`${baseUrl}/phone-exists/${encodeURIComponent(normalizedPhone)}`, {
+      headers: { "Client-Token": env.ZAPI_CLIENT_TOKEN },
+    });
+    if (lookupResponse.ok) {
+      const lookupResult = await lookupResponse.json<ZApiPhoneLookup | ZApiPhoneLookup[]>();
+      const lookup = Array.isArray(lookupResult) ? lookupResult[0] : lookupResult;
+      const canonicalPhone = lookup?.exists && lookup.phone ? normalizePhone(lookup.phone) : normalizedPhone;
+      if (canonicalPhone !== normalizedPhone) {
+        response = await postText(`${baseUrl}/send-text`, env.ZAPI_CLIENT_TOKEN, canonicalPhone, message);
+      }
+    }
+  }
   if (!response.ok) throw new HttpError("A Z-API recusou o envio da mensagem.", 502);
   const result = await response.json<{ messageId?: string; id?: string }>();
   return result.messageId ?? result.id ?? crypto.randomUUID();
