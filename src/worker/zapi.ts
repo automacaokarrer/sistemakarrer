@@ -1,6 +1,27 @@
 import { HttpError, cleanText, normalizePhone } from "./http";
 import type { AppEnv, ZApiPayload } from "./types";
 
+export type ZApiMessageStatus = "sent" | "delivered" | "read" | "failed";
+
+export function normalizeStatusUpdate(payload: ZApiPayload): Array<{ messageId: string; status: ZApiMessageStatus }> | null {
+  const type = payload.type?.toLowerCase();
+  if (type === "deliverycallback" && payload.messageId) {
+    return [{ messageId: payload.messageId, status: payload.error ? "failed" : "sent" }];
+  }
+  if (type !== "messagestatuscallback" || !payload.ids?.length) return null;
+
+  const providerStatus = payload.status?.toUpperCase();
+  const status: ZApiMessageStatus | null = providerStatus === "SENT"
+    ? "sent"
+    : providerStatus === "RECEIVED"
+      ? "delivered"
+      : providerStatus === "READ" || providerStatus === "READ_BY_ME" || providerStatus === "PLAYED"
+        ? "read"
+        : null;
+  if (!status) return [];
+  return payload.ids.filter(Boolean).map((messageId) => ({ messageId, status }));
+}
+
 export async function sendText(env: AppEnv, phone: string, message: string): Promise<string> {
   if (!env.ZAPI_INSTANCE_ID || !env.ZAPI_INSTANCE_TOKEN || !env.ZAPI_CLIENT_TOKEN) {
     if (env.ENVIRONMENT === "development") return `local-${crypto.randomUUID()}`;

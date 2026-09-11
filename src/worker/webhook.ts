@@ -2,30 +2,22 @@ import { safeEqual } from "./auth";
 import { HttpError, json, readJson } from "./http";
 import { messageSelect, type MessageRow } from "./repository";
 import type { AppEnv, ZApiPayload } from "./types";
-import { normalizeIncoming, storeRemoteMedia } from "./zapi";
-
-function statusFromProvider(value: string | undefined): MessageRow["status"] | null {
-  const status = value?.toLowerCase();
-  if (status === "sent" || status === "delivered" || status === "read" || status === "failed") return status;
-  return null;
-}
-
-function isDeliveryUpdate(payload: ZApiPayload): boolean {
-  return Boolean(payload.messageId && payload.status && !payload.phone && !payload.text && !payload.image && !payload.audio && !payload.video && !payload.document);
-}
+import { normalizeIncoming, normalizeStatusUpdate, storeRemoteMedia } from "./zapi";
 
 export async function handleZApiWebhook(request: Request, env: AppEnv, suppliedToken: string): Promise<Response> {
   if (!env.ZAPI_WEBHOOK_TOKEN) throw new HttpError("Webhook Z-API ainda não configurado.", 503);
   if (!(await safeEqual(suppliedToken, env.ZAPI_WEBHOOK_TOKEN))) throw new HttpError("Webhook não autorizado.", 401);
 
   const payload = await readJson<ZApiPayload>(request, 2_000_000);
-  if (isDeliveryUpdate(payload)) {
-    const status = statusFromProvider(payload.status);
-    if (status) {
-      await env.DB.prepare("UPDATE messages SET status = ?1 WHERE zapi_message_id = ?2")
-        .bind(status, payload.messageId).run();
+  const statusUpdates = normalizeStatusUpdate(payload);
+  if (statusUpdates) {
+    if (statusUpdates.length) {
+      await env.DB.batch(statusUpdates.map(({ messageId, status }) =>
+        env.DB.prepare("UPDATE messages SET status = ?1 WHERE zapi_message_id = ?2")
+          .bind(status, messageId),
+      ));
     }
-    return json({ ok: true });
+    return json({ ok: true, updated: statusUpdates.length });
   }
 
   const incoming = normalizeIncoming(payload);
