@@ -21,8 +21,8 @@ Este arquivo registra decisões, estado de produção e procedimentos importante
 - D1: `karrer-atendimento-db`.
 - R2: `karrer-atendimento-media`.
 - Durable Object: `ChatRoom`.
-- Última versão Cloudflare validada nesta data: `115abb49-8787-4871-9989-2c8d4618668e`.
-- Commit de código correspondente: `0305fc0`.
+- Última versão Cloudflare validada nesta data: `31dd9983-499d-4c16-bb41-d3df2ecbc530`.
+- Commit de código correspondente: `63220c5`.
 - O endpoint protegido do webhook Z-API respondeu corretamente após o deploy.
 
 ## Funcionalidades implementadas
@@ -207,6 +207,7 @@ Deploy e push são operações diferentes: o deploy publica os arquivos locais n
 - O WhatsApp institucional foi confirmado como operacional pelo responsável; não há teste adicional pendente. Manter apenas o monitoramento normal da integração.
 - O novo fluxo de produtividade do chat está publicado: filtros `Minhas`, `Não atribuídas`, `Não lidas` e `Quentes`; ordenação por maior espera; status `Nova`, `Em atendimento`, `Aguardando cliente` e `Finalizada`; reabertura automática; direcionamento pelo administrador; e abertura consciente para evitar leitura/atribuição automática da primeira conversa.
 - O fluxo de filas, espera, direcionamento e status foi publicado e validado na versão `115abb49-8787-4871-9989-2c8d4618668e`, correspondente ao commit `0305fc0`. A página pública respondeu HTTP 200, exibiu o título e a tela de login esperados e não apresentou overflow horizontal.
+- Os seletores nativos de atendente e status foram substituídos por menus próprios, amplos e responsivos; os cinco filtros do chat foram compactados em uma única linha. O ajuste foi publicado e validado na versão `31dd9983-499d-4c16-bb41-d3df2ecbc530`, correspondente ao commit `63220c5`.
 - A página de Leads foi aprimorada localmente sem alterar sua identidade visual: o filtro de hora de entrada agora funciona de fato, os controles receberam rótulos acessíveis e os estados vazios ficaram contextuais.
 - O design de Leads foi aplicado ao Cadastro de Clientes com hero bege, quatro KPIs, contorno amarelo, cartões, hierarquia e responsividade equivalentes.
 - O formulário de clientes ganhou feedback correto de sucesso/erro, contador de documentos, autocomplete e limpeza integral de estados.
