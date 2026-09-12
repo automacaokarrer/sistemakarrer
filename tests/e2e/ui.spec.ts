@@ -9,7 +9,11 @@ async function mockAnonymous(page: Page) {
   }));
 }
 
-async function mockDashboard(page: Page, additionalConversations: () => unknown[] = () => []) {
+async function mockDashboard(
+  page: Page,
+  additionalConversations: () => unknown[] = () => [],
+  messagePage: (url: URL) => unknown = () => ({ messages: [], hasMore: false, nextCursor: null }),
+) {
   const permissions = { chat: true, leads: true, clients: true, settings: true };
   const user = { id: "admin-1", name: "Ana Karrer", email: "ana@karrer.test", role: "admin", avatarUrl: null, professionalRole: "Administradora", permissions };
   const conversations = [{
@@ -28,7 +32,8 @@ async function mockDashboard(page: Page, additionalConversations: () => unknown[
   ];
 
   await page.route("**/api/**", async (route) => {
-    const path = new URL(route.request().url()).pathname;
+    const requestUrl = new URL(route.request().url());
+    const path = requestUrl.pathname;
     let body: unknown = { ok: true };
     if (path === "/api/auth/status") body = { setupRequired: false, user, features: { googleDrive: false } };
     else if (path === "/api/conversations") body = { conversations: [...conversations, ...additionalConversations()] };
@@ -36,7 +41,7 @@ async function mockDashboard(page: Page, additionalConversations: () => unknown[
     else if (path === "/api/leads/summary") body = { total: 1, hot: 1, warm: 0, cold: 0, averageFirstResponseMinutes: 4, daily: [] };
     else if (path === "/api/settings/users") body = { users };
     else if (path.endsWith("/media") && route.request().method() === "POST") body = { message: { id: "message-upload", conversationId: "conversation-1", direction: "outbound", type: "image", body: "Imagem de teste", fileName: "foto.png", mediaKey: "uploads/test/foto.png", duration: null, status: "sent", createdAt: now } };
-    else if (path.endsWith("/messages")) body = { messages: [] };
+    else if (path.endsWith("/messages")) body = messagePage(requestUrl);
     await route.fulfill({ contentType: "application/json", body: JSON.stringify(body) });
   });
 }
@@ -100,6 +105,34 @@ test("nova conversa aparece em tempo real sem recarregar a página", async ({ pa
   inboxSocket!.send(JSON.stringify({ type: "conversation.updated" }));
 
   await expect(page.getByRole("button", { name: /Contato em tempo real/ })).toBeVisible();
+});
+
+test("histórico carrega 40 mensagens e busca as anteriores ao rolar", async ({ page }) => {
+  let initialLimit = "";
+  let olderRequested = false;
+  const makeMessage = (id: string, body: string, minute: number) => ({
+    id, conversationId: "conversation-1", direction: "inbound", type: "text", body,
+    fileName: null, mediaKey: null, duration: null, status: "received", createdAt: new Date(Date.now() - minute * 60_000).toISOString(),
+  });
+  await mockDashboard(page, () => [], (url) => {
+    initialLimit = url.searchParams.get("limit") ?? "";
+    if (url.searchParams.has("before")) {
+      olderRequested = true;
+      return { messages: [makeMessage("older-1", "Mensagem mais antiga carregada", 42)], hasMore: false, nextCursor: null };
+    }
+    return {
+      messages: Array.from({ length: 40 }, (_, index) => makeMessage(`recent-${index}`, `Mensagem recente ${index + 1}`, 40 - index)),
+      hasMore: true,
+      nextCursor: "cursor-40",
+    };
+  });
+  await page.goto("/");
+  await expect(page.getByText("Mensagem recente 40")).toBeVisible();
+  expect(initialLimit).toBe("40");
+
+  await page.locator(".messages").evaluate((element) => { element.scrollTop = 0; element.dispatchEvent(new Event("scroll")); });
+  await expect.poll(() => olderRequested).toBe(true);
+  await expect(page.getByText("Mensagem mais antiga carregada")).toBeAttached();
 });
 
 test("ícone de imagem envia arquivo pelo compositor", async ({ page }) => {

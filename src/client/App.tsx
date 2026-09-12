@@ -350,10 +350,15 @@ function ConversationPanel({ conversation, onBack, onOpenLead, onRefresh }: { co
   const [messages, setMessages] = useState<Message[]>([]);
   const [text, setText] = useState("");
   const [loading, setLoading] = useState(false);
+  const [loadingOlder, setLoadingOlder] = useState(false);
+  const [nextCursor, setNextCursor] = useState<string | null>(null);
+  const [hasMore, setHasMore] = useState(false);
   const [sending, setSending] = useState(false);
   const [recording, setRecording] = useState(false);
   const [sendError, setSendError] = useState("");
   const endRef = useRef<HTMLDivElement>(null);
+  const messagesRef = useRef<HTMLDivElement>(null);
+  const loadingOlderRef = useRef(false);
   const imageInputRef = useRef<HTMLInputElement>(null);
   const documentInputRef = useRef<HTMLInputElement>(null);
   const recorderRef = useRef<MediaRecorder | null>(null);
@@ -362,14 +367,45 @@ function ConversationPanel({ conversation, onBack, onOpenLead, onRefresh }: { co
 
   const loadMessages = useCallback(async () => {
     setLoading(true);
+    setMessages([]);
+    setNextCursor(null);
+    setHasMore(false);
     try {
-      const data = await api<{ messages: Message[] }>(`/api/conversations/${conversation.id}/messages?limit=40`);
+      const data = await api<{ messages: Message[]; hasMore: boolean; nextCursor: string | null }>(`/api/conversations/${conversation.id}/messages?limit=40`);
       setMessages(data.messages);
+      setHasMore(data.hasMore);
+      setNextCursor(data.nextCursor);
       requestAnimationFrame(() => endRef.current?.scrollIntoView());
     } finally {
       setLoading(false);
     }
   }, [conversation.id]);
+
+  const loadOlderMessages = useCallback(async () => {
+    if (!hasMore || !nextCursor || loadingOlderRef.current) return;
+    loadingOlderRef.current = true;
+    setLoadingOlder(true);
+    const pane = messagesRef.current;
+    const previousHeight = pane?.scrollHeight ?? 0;
+    const previousTop = pane?.scrollTop ?? 0;
+    try {
+      const data = await api<{ messages: Message[]; hasMore: boolean; nextCursor: string | null }>(`/api/conversations/${conversation.id}/messages?limit=40&before=${encodeURIComponent(nextCursor)}`);
+      setMessages((current) => {
+        const known = new Set(current.map((message) => message.id));
+        return [...data.messages.filter((message) => !known.has(message.id)), ...current];
+      });
+      setHasMore(data.hasMore);
+      setNextCursor(data.nextCursor);
+      requestAnimationFrame(() => {
+        if (pane) pane.scrollTop = previousTop + (pane.scrollHeight - previousHeight);
+      });
+    } catch (reason) {
+      setSendError(reason instanceof Error ? reason.message : "Não foi possível carregar mensagens anteriores.");
+    } finally {
+      loadingOlderRef.current = false;
+      setLoadingOlder(false);
+    }
+  }, [conversation.id, hasMore, nextCursor]);
 
   useEffect(() => void loadMessages(), [loadMessages]);
   useEffect(() => () => {
@@ -405,8 +441,10 @@ function ConversationPanel({ conversation, onBack, onOpenLead, onRefresh }: { co
         try {
           const data = JSON.parse(event.data) as { type: string; message?: Message };
           if (data.type === "message.new" && data.message) {
+            const pane = messagesRef.current;
+            const shouldFollow = !pane || pane.scrollHeight - pane.scrollTop - pane.clientHeight < 120;
             setMessages((current) => current.some((item) => item.id === data.message?.id) ? current : [...current, data.message!]);
-            requestAnimationFrame(() => endRef.current?.scrollIntoView({ behavior: "smooth" }));
+            if (shouldFollow) requestAnimationFrame(() => endRef.current?.scrollIntoView({ behavior: "smooth" }));
           }
         } catch { /* mensagens de controle são ignoradas */ }
       };
@@ -494,8 +532,9 @@ function ConversationPanel({ conversation, onBack, onOpenLead, onRefresh }: { co
         <div><h2>{conversation.name}</h2><p>{conversation.online ? <em>Online</em> : `Visto por último ${formatTime(conversation.lastSeenAt)}`} <ClassificationBadge value={conversation.classification} /></p></div>
         <button className="primary" onClick={onOpenLead}>Ver ficha do lead</button><button className="icon-button"><Menu size={19} /></button>
       </header>
-      <div className="messages">
+      <div ref={messagesRef} className="messages" onScroll={(event) => { if (event.currentTarget.scrollTop < 120) void loadOlderMessages(); }}>
         {loading && <div className="loading-messages"><LoaderCircle className="spin" size={15} /> Carregando mensagens...</div>}
+        {loadingOlder && <div className="loading-messages"><LoaderCircle className="spin" size={15} /> Carregando mensagens anteriores...</div>}
         <div className="date-pill">Hoje</div>
         {messages.map((message) => <MessageBubble key={message.id} message={message} />)}
         {sendError && <div className="message-error" role="alert">{sendError}</div>}
