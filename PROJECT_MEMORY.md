@@ -21,8 +21,8 @@ Este arquivo registra decisões, estado de produção e procedimentos importante
 - D1: `karrer-atendimento-db`.
 - R2: `karrer-atendimento-media`.
 - Durable Object: `ChatRoom`.
-- Última versão Cloudflare validada nesta data: `31dd9983-499d-4c16-bb41-d3df2ecbc530`.
-- Commit de código correspondente: `63220c5`.
+- Última versão Cloudflare validada nesta data: `dbda570a-3331-471f-aa36-8fd14de4471c`.
+- Commit de código correspondente: `ea379da`.
 - O endpoint protegido do webhook Z-API respondeu corretamente após o deploy.
 
 ## Funcionalidades implementadas
@@ -47,6 +47,7 @@ Este arquivo registra decisões, estado de produção e procedimentos importante
 - A foto de perfil do contato é consultada pela Z-API, copiada para o R2 privado e renovada a cada sete dias. Quando indisponível por privacidade ou ausência de foto, a interface usa as iniciais.
 - Filtros, métricas e exportação CSV de leads.
 - Cadastro completo de clientes e preenchimento de endereço por CEP.
+- Edição de clientes a partir da lista do Cadastro, inclusive contatos incompletos recebidos pelo WhatsApp: o formulário carrega os dados e envia `PATCH /api/contacts/:id` com permissão `clients`; contatos e classificação da conversa são atualizados em lote no D1, com verificação de CPF/telefone duplicados, auditoria e aviso em tempo real.
 - Upload de até 10 documentos por cliente, máximo de 10 MB por arquivo e 16 MB no total.
 - Integração opcional dos documentos com uma pasta do Google Drive.
 
@@ -103,7 +104,7 @@ npm.cmd run test:e2e
 npm.cmd run build
 ```
 
-Último resultado registrado: 21 testes unitários e 14 testes E2E aprovados em desktop e Pixel 7, incluindo tempo real, paginação de 40 mensagens, prévias de imagem/áudio, escrita simultânea, confirmação de leitura, filas do chat, tempo de espera, direcionamento e status operacional; typecheck e build aprovados.
+Último resultado registrado: 25 testes unitários (incluindo persistência SQL da edição de clientes) e 14 testes E2E aprovados em desktop e Pixel 7, incluindo edição da ficha, tempo real, paginação de 40 mensagens, prévias de imagem/áudio, escrita simultânea, confirmação de leitura, filas do chat, tempo de espera, direcionamento e status operacional; typecheck e build aprovados.
 
 ## Migrações e deploy
 
@@ -221,4 +222,5 @@ Deploy e push são operações diferentes: o deploy publica os arquivos locais n
 - O callback de presença da Z-API foi cadastrado após autorização explícita e está direcionado ao endpoint protegido já processado pelo Worker.
 - Leitura sincronizada, atribuição automática do atendente e fotos dos contatos foram publicadas e validadas na versão `f50d079c-446b-4ccb-a5e9-39a672bb0a66`, correspondente ao commit `7ec5c12`.
 - O player redesenhado de prévia de áudio foi publicado e validado em produção na versão `131eda96-db83-4226-8e1f-c675b27f3cb3`, correspondente ao commit `08d5b81`.
+- A edição de clientes foi publicada e validada na versão `dbda570a-3331-471f-aa36-8fd14de4471c`, correspondente ao commit `ea379da`. A página pública e `/api/auth/status` responderam HTTP 200; o Chromium exibiu o título e a tela de login esperados, sem overflow horizontal. Não foram alterados registros reais de clientes durante a validação.
 - Continua pendente configurar no Cloudflare os três secrets do Google Drive usando as credenciais da conta de serviço institucional da Karrer e repetir o deploy e o teste de upload.
