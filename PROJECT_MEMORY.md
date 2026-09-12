@@ -21,8 +21,8 @@ Este arquivo registra decisões, estado de produção e procedimentos importante
 - D1: `karrer-atendimento-db`.
 - R2: `karrer-atendimento-media`.
 - Durable Object: `ChatRoom`.
-- Última versão Cloudflare validada nesta data: `692106cd-72f9-4920-ad3e-41b93effa8d0`.
-- Commit de código correspondente: `52241f7`.
+- Última versão Cloudflare validada nesta data: `0baffa39-f103-44e0-8cb8-12dfd1477425`.
+- Commit de código correspondente: `2cec92e`.
 - O endpoint protegido do webhook Z-API respondeu corretamente após o deploy.
 
 ## Funcionalidades implementadas
@@ -37,6 +37,10 @@ Este arquivo registra decisões, estado de produção e procedimentos importante
 - Atualização do chat em tempo real por WebSocket global e por conversa, com heartbeat e reconexão automática; novas conversas e mensagens aparecem sem atualizar a página.
 - O histórico abre com as 40 mensagens mais recentes e carrega blocos anteriores automaticamente ao rolar para o topo, preservando a posição de leitura. Mensagens novas só deslocam a tela quando o atendente já está próximo do fim.
 - Envio pelo chat de imagens JPG/PNG/WebP, documentos PDF/Office/CSV/TXT de até 10 MB e áudios gravados no navegador, com armazenamento privado no R2 e envio em Base64 pela Z-API.
+- Imagens e áudios possuem prévia antes do envio; o áudio pode ser ouvido e descartado. O compositor de texto permanece liberado durante gravação, prévia e upload de mídia.
+- Confirmações de mensagem mudam em tempo real entre enviado, entregue e lido. O cabeçalho exibe presença e visto por último quando a Z-API fornece esses eventos.
+- Na administração, clicar em um usuário abre um modal de perfil com foto, função, presença, conta e permissões. Alterações de acessos continuam exclusivas do administrador mestre e protegidas pela API.
+- Telefones brasileiros são apresentados com DDD e nono dígito, inclusive quando a origem ainda fornece um número móvel antigo de oito dígitos.
 - Filtros, métricas e exportação CSV de leads.
 - Cadastro completo de clientes e preenchimento de endereço por CEP.
 - Upload de até 10 documentos por cliente, máximo de 10 MB por arquivo e 16 MB no total.
@@ -52,6 +56,7 @@ Este arquivo registra decisões, estado de produção e procedimentos importante
 - A opção de notificar mensagens enviadas pelo próprio aparelho permanece desativada para evitar duplicidade com envios originados pelo CRM.
 - Após um envio controlado aceito pela Z-API para um número autorizado, o WhatsApp exibiu uma restrição temporária para iniciar novas conversas e a instância passou a constar como desconectada; não era a tela de banimento total da conta.
 - Em 12 de setembro de 2026, uma consulta somente de leitura aos endpoints oficiais retornou instância e aparelho conectados, pagamento `PAID` e vencimento em 12 de outubro de 2026. Os três callbacks principais continuavam apontando exatamente para o endpoint protegido do CRM, e o Worker de produção respondeu saudável.
+- Após a versão `0baffa39-f103-44e0-8cb8-12dfd1477425`, uma nova consulta somente de leitura confirmou novamente `connected=true` e `smartphoneConnected=true`. O Worker já processa `PresenceChatCallback`, mas o cadastro desse quarto callback na Z-API ficou pendente de autorização explícita porque a URL protegida contém o token secreto do webhook.
 - Em 12 de setembro de 2026, uma mensagem de texto oficial recebida pelo WhatsApp chegou ao D1 com identificador da Z-API e status `received`, comprovando o fluxo de entrada depois da reconexão. O fluxo de saída e as confirmações de entrega/leitura ainda dependem de uma resposta controlada.
 - Antes de um novo teste controlado, confirmar no aparelho institucional que a restrição da Meta foi efetivamente removida. Não reiniciar a instância nem iniciar conversa sem destinatário autorizado e consentimento explícito.
 - Não enviar textos técnicos, genéricos ou com aparência de robô. Toda mensagem deve ter contexto real, identificar o atendente e a Karrer, respeitar o consentimento do destinatário e permitir que a pessoa encerre o contato.
@@ -94,7 +99,7 @@ npm.cmd run test:e2e
 npm.cmd run build
 ```
 
-Último resultado registrado: 16 testes unitários e 10 testes E2E aprovados, incluindo atualização em tempo real, paginação de 40 mensagens e seleção de imagem; typecheck e build aprovados.
+Último resultado registrado: 16 testes unitários e 14 testes E2E aprovados em desktop e Pixel 7, incluindo tempo real, paginação de 40 mensagens, prévias de imagem/áudio, escrita simultânea, confirmação de leitura, modal de usuário e formatação brasileira do telefone; typecheck e build aprovados.
 
 ## Migrações e deploy
 
@@ -203,4 +208,6 @@ Deploy e push são operações diferentes: o deploy publica os arquivos locais n
 - Não reaplicar `seed/validation.sql` em produção. A validação autenticada automatizada não usa `INITIAL_ADMIN_PASSWORD`, pois esse valor de configuração inicial pode ficar desatualizado depois que o administrador troca a senha.
 - O chat em tempo real e os envios de áudio, imagem e documento foram publicados e validados em produção na versão `83d226be-791d-4aef-8d2c-5adbbc841176`, correspondente ao commit `40a25f0`.
 - O carregamento progressivo do histórico foi publicado e validado em produção na versão `692106cd-72f9-4920-ad3e-41b93effa8d0`, correspondente ao commit `52241f7`.
+- As prévias de mídia, confirmação de leitura em tempo real, presença/visto por último, modal completo de usuário e telefone com nono dígito foram publicados e validados em produção na versão `0baffa39-f103-44e0-8cb8-12dfd1477425`, correspondente ao commit `2cec92e`.
+- Permanece pendente cadastrar o callback de presença da Z-API; essa operação transmite ao provedor a URL protegida com o token do webhook e exige autorização explícita do responsável.
 - Continua pendente configurar no Cloudflare os três secrets do Google Drive usando as credenciais da conta de serviço institucional da Karrer e repetir o deploy e o teste de upload.
