@@ -21,8 +21,8 @@ Este arquivo registra decisões, estado de produção e procedimentos importante
 - D1: `karrer-atendimento-db`.
 - R2: `karrer-atendimento-media`.
 - Durable Object: `ChatRoom`.
-- Última versão Cloudflare validada nesta data: `f50d079c-446b-4ccb-a5e9-39a672bb0a66`.
-- Commit de código correspondente: `7ec5c12`.
+- Última versão Cloudflare validada nesta data: `115abb49-8787-4871-9989-2c8d4618668e`.
+- Commit de código correspondente: `0305fc0`.
 - O endpoint protegido do webhook Z-API respondeu corretamente após o deploy.
 
 ## Funcionalidades implementadas
@@ -61,8 +61,8 @@ Este arquivo registra decisões, estado de produção e procedimentos importante
 - Após um envio controlado aceito pela Z-API para um número autorizado, o WhatsApp exibiu uma restrição temporária para iniciar novas conversas e a instância passou a constar como desconectada; não era a tela de banimento total da conta.
 - Em 12 de setembro de 2026, uma consulta somente de leitura aos endpoints oficiais retornou instância e aparelho conectados, pagamento `PAID` e vencimento em 12 de outubro de 2026. Os três callbacks principais continuavam apontando exatamente para o endpoint protegido do CRM, e o Worker de produção respondeu saudável.
 - Após a versão `0baffa39-f103-44e0-8cb8-12dfd1477425`, uma nova consulta confirmou novamente `connected=true` e `smartphoneConnected=true`. Com autorização explícita do responsável, o callback `PresenceChatCallback` foi cadastrado com sucesso na Z-API e a instância permaneceu conectada.
-- Em 12 de setembro de 2026, uma mensagem de texto oficial recebida pelo WhatsApp chegou ao D1 com identificador da Z-API e status `received`, comprovando o fluxo de entrada depois da reconexão. O fluxo de saída e as confirmações de entrega/leitura ainda dependem de uma resposta controlada.
-- Antes de um novo teste controlado, confirmar no aparelho institucional que a restrição da Meta foi efetivamente removida. Não reiniciar a instância nem iniciar conversa sem destinatário autorizado e consentimento explícito.
+- Em 12 de setembro de 2026, uma mensagem de texto oficial recebida pelo WhatsApp chegou ao D1 com identificador da Z-API e status `received`, comprovando o fluxo de entrada depois da reconexão.
+- O responsável confirmou que o WhatsApp institucional está funcionando normalmente; não há teste adicional de envio pendente. Não reiniciar a instância sem necessidade operacional nem iniciar conversas sem destinatário autorizado e consentimento explícito.
 - Não enviar textos técnicos, genéricos ou com aparência de robô. Toda mensagem deve ter contexto real, identificar o atendente e a Karrer, respeitar o consentimento do destinatário e permitir que a pessoa encerre o contato.
 - Não variar textos artificialmente para contornar filtros antispam; a prioridade é uma conversa legítima e compatível com as políticas do WhatsApp.
 - Nunca registrar os valores das credenciais nem a URL completa do webhook, pois ela contém um token de autenticação.
@@ -103,13 +103,14 @@ npm.cmd run test:e2e
 npm.cmd run build
 ```
 
-Último resultado registrado: 16 testes unitários e 14 testes E2E aprovados em desktop e Pixel 7, incluindo tempo real, paginação de 40 mensagens, prévias de imagem/áudio, escrita simultânea, confirmação de leitura, modal de usuário e formatação brasileira do telefone; typecheck e build aprovados.
+Último resultado registrado: 21 testes unitários e 14 testes E2E aprovados em desktop e Pixel 7, incluindo tempo real, paginação de 40 mensagens, prévias de imagem/áudio, escrita simultânea, confirmação de leitura, filas do chat, tempo de espera, direcionamento e status operacional; typecheck e build aprovados.
 
 ## Migrações e deploy
 
 - A migração `migrations/0004_user_profiles.sql` adiciona perfis, origem do cadastro, índice de presença e documentos dos clientes.
 - A migração `migrations/0005_contact_avatar_cache.sql` adiciona as referências e o controle de renovação do cache privado das fotos dos contatos.
-- Todas as migrações até `0005_contact_avatar_cache.sql` estão aplicadas no D1 remoto; a última conferência não encontrou pendências.
+- A migração `migrations/0006_conversation_waiting.sql` adiciona tempo de espera, status operacional e índices de responsável/status.
+- Todas as migrações até `0006_conversation_waiting.sql` estão aplicadas no D1 remoto; a última conferência não encontrou pendências.
 
 ### Runbook de deploy no Cloudflare
 
@@ -203,7 +204,9 @@ Deploy e push são operações diferentes: o deploy publica os arquivos locais n
 
 ## Próximo passo conhecido
 
-- No aparelho institucional, confirmar em `Saiba mais` que a restrição foi removida. Depois, fazer um único teste ponta a ponta com destinatário autorizado e consentimento explícito, começando de preferência pela resposta a uma mensagem recebida.
+- O WhatsApp institucional foi confirmado como operacional pelo responsável; não há teste adicional pendente. Manter apenas o monitoramento normal da integração.
+- O novo fluxo de produtividade do chat está publicado: filtros `Minhas`, `Não atribuídas`, `Não lidas` e `Quentes`; ordenação por maior espera; status `Nova`, `Em atendimento`, `Aguardando cliente` e `Finalizada`; reabertura automática; direcionamento pelo administrador; e abertura consciente para evitar leitura/atribuição automática da primeira conversa.
+- O fluxo de filas, espera, direcionamento e status foi publicado e validado na versão `115abb49-8787-4871-9989-2c8d4618668e`, correspondente ao commit `0305fc0`. A página pública respondeu HTTP 200, exibiu o título e a tela de login esperados e não apresentou overflow horizontal.
 - A página de Leads foi aprimorada localmente sem alterar sua identidade visual: o filtro de hora de entrada agora funciona de fato, os controles receberam rótulos acessíveis e os estados vazios ficaram contextuais.
 - O design de Leads foi aplicado ao Cadastro de Clientes com hero bege, quatro KPIs, contorno amarelo, cartões, hierarquia e responsividade equivalentes.
 - O formulário de clientes ganhou feedback correto de sucesso/erro, contador de documentos, autocomplete e limpeza integral de estados.
