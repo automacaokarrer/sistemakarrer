@@ -274,6 +274,15 @@ function Dashboard({ user, googleDrive, onLogout }: { user: User; googleDrive: b
   }, [loadContacts, loadSummary, view]);
   const selected = conversations.find((conversation) => conversation.id === selectedId) ?? null;
 
+  useEffect(() => {
+    if (view !== "chat" || !selected || selected.unreadCount <= 0) return;
+    const conversationId = selected.id;
+    setConversations((current) => current.map((item) => item.id === conversationId ? { ...item, unreadCount: 0, assigneeName: item.assigneeName ?? user.name } : item));
+    void api<{ assigneeName: string }>(`/api/conversations/${conversationId}/read`, { method: "POST" })
+      .then((result) => setConversations((current) => current.map((item) => item.id === conversationId ? { ...item, unreadCount: 0, assigneeName: result.assigneeName } : item)))
+      .catch(() => void reloadConversations());
+  }, [reloadConversations, selected, user.name, view]);
+
   async function logout() {
     await api("/api/auth/logout", { method: "POST" });
     onLogout();
@@ -555,7 +564,7 @@ function ConversationPanel({ conversation, onBack, onOpenLead, onRefresh }: { co
     <div className="conversation-panel">
       <header className="chat-header">
         <button className="mobile-back" aria-label="Voltar às conversas" onClick={onBack}><ArrowLeft size={20} /></button>
-        <Avatar name={conversation.name} online={conversation.online} />
+        <Avatar name={conversation.name} imageUrl={conversation.avatarUrl} online={conversation.online} />
         <div><h2>{conversation.name}</h2><p>{conversation.online ? <em>Online</em> : conversation.lastSeenAt ? `Visto por último ${new Date(conversation.lastSeenAt).toLocaleString("pt-BR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" })}` : "Visto por último indisponível"} <ClassificationBadge value={conversation.classification} /></p></div>
         <button className="primary" onClick={onOpenLead}>Ver ficha do lead</button><button className="icon-button"><Menu size={19} /></button>
       </header>
@@ -882,9 +891,9 @@ function Modal({ title, subtitle, tone, onClose, children }: { title: string; su
   return <div className="modal-backdrop" role="presentation" onMouseDown={(event) => event.target === event.currentTarget && onClose()}><section className={`modal-card ${tone ?? ""}`} role="dialog" aria-modal="true" aria-label={title}><button className="modal-close" onClick={onClose} aria-label="Fechar"><X size={18} /></button><div className="modal-mark">{tone === "danger" ? <Trash2 /> : <ShieldCheck />}</div><h2>{title}</h2><p>{subtitle}</p>{children}</section></div>;
 }
 
-function ConversationRow({ conversation, active, onClick }: { conversation: Conversation; active: boolean; onClick: () => void }) { return <button className={`conversation-row ${active ? "active" : ""}`} onClick={onClick}><Avatar name={conversation.name} online={conversation.online} size="sm" /><span><strong>{conversation.name}</strong><small>{conversation.lastMessageType === "audio" ? "Áudio" : conversation.lastMessage ?? conversation.stage}</small></span><time>{formatTime(conversation.lastMessageAt)}{conversation.unreadCount > 0 && <b>{conversation.unreadCount}</b>}</time></button>; }
+function ConversationRow({ conversation, active, onClick }: { conversation: Conversation; active: boolean; onClick: () => void }) { return <button className={`conversation-row ${active ? "active" : ""}`} onClick={onClick}><Avatar name={conversation.name} imageUrl={conversation.avatarUrl} online={conversation.online} size="sm" /><span><strong>{conversation.name}</strong><small>{conversation.lastMessageType === "audio" ? "Áudio" : conversation.lastMessage ?? conversation.stage}</small>{conversation.assigneeName && <em className="conversation-assignee"><i />{conversation.assigneeName} atendendo</em>}</span><time>{formatTime(conversation.lastMessageAt)}{conversation.unreadCount > 0 && <b aria-label={`${conversation.unreadCount} mensagens não lidas`}>{conversation.unreadCount}</b>}</time></button>; }
 function Brand() { return <div className="brand"><img src="/karrer-logo.png" alt="Karrer & Advogados" /></div>; }
-function Avatar({ name, imageUrl, online, size = "md" }: { name: string | null; imageUrl?: string | null; online?: boolean; size?: "xs" | "sm" | "md" }) { return <div className={`avatar ${size}`}>{imageUrl ? <img src={imageUrl} alt={`Foto de ${name ?? "usuário"}`} loading="lazy" /> : initials(name)}{online && <i />}</div>; }
+function Avatar({ name, imageUrl, online, size = "md" }: { name: string | null; imageUrl?: string | null; online?: boolean; size?: "xs" | "sm" | "md" }) { const [failed, setFailed] = useState(false); useEffect(() => setFailed(false), [imageUrl]); return <div className={`avatar ${size}`}>{imageUrl && !failed ? <img src={imageUrl} alt={`Foto de ${name ?? "usuário"}`} loading="lazy" onError={() => setFailed(true)} /> : initials(name)}{online && <i />}</div>; }
 function ClassificationBadge({ value }: { value: Classification }) { return <span className={`badge ${value}`}>Lead {classificationLabel[value].toLowerCase()}</span>; }
 function SearchBox({ value, onChange, placeholder }: { value: string; onChange: (value: string) => void; placeholder: string }) { return <label className="search-box"><Search size={16} /><input value={value} onChange={(event) => onChange(event.target.value)} placeholder={placeholder} /></label>; }
 function Chip({ active, onClick, children }: { active: boolean; onClick: () => void; children: React.ReactNode }) { return <button className={`chip ${active ? "active" : ""}`} onClick={onClick}>{children}</button>; }

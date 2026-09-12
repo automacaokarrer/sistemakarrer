@@ -4,11 +4,13 @@ import { HttpError, error, json, routeMatch } from "./http";
 import {
   addNote,
   createContact,
+  getContactAvatar,
   getMedia,
   leadSummary,
   listContacts,
   listConversations,
   listMessages,
+  markConversationRead,
   sendMessage,
   sendMediaMessage,
   updateClassification,
@@ -108,6 +110,12 @@ async function routeApi(request: Request, env: AppEnv): Promise<Response> {
     return uploadContactDocuments(request, env, user, contactDocuments[1]);
   }
 
+  const contactAvatar = routeMatch(pathname, /^\/api\/contacts\/([^/]+)\/avatar$/);
+  if (method === "GET" && contactAvatar) {
+    requireAnyPermission(user, ["chat", "leads", "clients"]);
+    return getContactAvatar(env, contactAvatar[1]);
+  }
+
   const messages = routeMatch(pathname, /^\/api\/conversations\/([^/]+)\/messages$/);
   if (messages && method === "GET") {
     requireAnyPermission(user, ["chat", "leads"]);
@@ -122,6 +130,12 @@ async function routeApi(request: Request, env: AppEnv): Promise<Response> {
   if (conversationMedia && method === "POST") {
     requirePermission(user, "chat");
     return sendMediaMessage(request, env, user, conversationMedia[1]);
+  }
+
+  const conversationRead = routeMatch(pathname, /^\/api\/conversations\/([^/]+)\/read$/);
+  if (conversationRead && method === "POST") {
+    requirePermission(user, "chat");
+    return markConversationRead(env, user, conversationRead[1]);
   }
 
   if (method === "GET" && pathname === "/api/conversations/ws") {

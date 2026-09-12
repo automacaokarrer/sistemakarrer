@@ -85,6 +85,28 @@ export async function sendMedia(env: AppEnv, phone: string, kind: "image" | "aud
   return result.messageId ?? result.id ?? result.zaapId ?? crypto.randomUUID();
 }
 
+export async function fetchContactProfilePicture(env: AppEnv, phone: string): Promise<{ body: ArrayBuffer; mime: string } | null> {
+  if (!env.ZAPI_INSTANCE_ID || !env.ZAPI_INSTANCE_TOKEN || !env.ZAPI_CLIENT_TOKEN) return null;
+  const baseUrl = `https://api.z-api.io/instances/${encodeURIComponent(env.ZAPI_INSTANCE_ID)}/token/${encodeURIComponent(env.ZAPI_INSTANCE_TOKEN)}`;
+  const metadata = await fetch(`${baseUrl}/profile-picture?phone=${encodeURIComponent(normalizePhone(phone))}`, {
+    headers: { "Client-Token": env.ZAPI_CLIENT_TOKEN },
+  });
+  if (!metadata.ok) return null;
+  const result = await metadata.json<{ link?: string }>();
+  if (!result.link) return null;
+  const url = new URL(result.link);
+  if (url.protocol !== "https:") return null;
+  const image = await fetch(url, { redirect: "follow" });
+  if (!image.ok) return null;
+  const mime = image.headers.get("content-type")?.split(";", 1)[0]?.trim().toLowerCase() ?? "";
+  if (!mime.startsWith("image/")) return null;
+  const declaredSize = Number(image.headers.get("content-length") ?? 0);
+  if (declaredSize > 5 * 1024 * 1024) return null;
+  const body = await image.arrayBuffer();
+  if (!body.byteLength || body.byteLength > 5 * 1024 * 1024) return null;
+  return { body, mime };
+}
+
 export function normalizeIncoming(payload: ZApiPayload): {
   phone: string;
   name: string;

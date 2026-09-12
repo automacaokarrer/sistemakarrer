@@ -16,10 +16,11 @@ async function mockDashboard(
 ) {
   const permissions = { chat: true, leads: true, clients: true, settings: true };
   const user = { id: "admin-1", name: "Ana Karrer", email: "ana@karrer.test", role: "admin", avatarUrl: null, professionalRole: "Administradora", permissions };
+  const conversationOverrides = new Map<string, { unreadCount: number; assigneeName: string }>();
   const conversations = [{
     id: "conversation-1", contactId: "contact-1", createdAt: now, name: "Maria Oliveira", phone: "5592999999999",
     bank: "Banco Exemplo", stage: "Documentação", classification: "hot", score: 86, lastMessage: "Enviei os documentos",
-    lastMessageType: "text", lastMessageAt: now, unreadCount: 2, online: false, lastSeenAt: now, assigneeName: "Ana Karrer",
+    lastMessageType: "text", lastMessageAt: now, unreadCount: 2, online: false, lastSeenAt: now, assigneeName: "Ana Karrer", avatarUrl: "/karrer-logo.png",
   }];
   const contacts = [{
     id: "contact-1", phone: "5592999999999", name: "Maria Oliveira", cpf: null, rg: null, rgIssuer: null,
@@ -36,10 +37,15 @@ async function mockDashboard(
     const path = requestUrl.pathname;
     let body: unknown = { ok: true };
     if (path === "/api/auth/status") body = { setupRequired: false, user, features: { googleDrive: false } };
-    else if (path === "/api/conversations") body = { conversations: [...conversations, ...additionalConversations()] };
+    else if (path === "/api/conversations") body = { conversations: [...conversations, ...additionalConversations()].map((conversation: any) => ({ ...conversation, ...(conversationOverrides.get(conversation.id) ?? {}) })) };
     else if (path === "/api/contacts") body = { contacts };
     else if (path === "/api/leads/summary") body = { total: 1, hot: 1, warm: 0, cold: 0, averageFirstResponseMinutes: 4, daily: [] };
     else if (path === "/api/settings/users") body = { users };
+    else if (/\/api\/conversations\/[^/]+\/read$/.test(path) && route.request().method() === "POST") {
+      const conversationId = path.split("/").at(-2)!;
+      conversationOverrides.set(conversationId, { unreadCount: 0, assigneeName: user.name });
+      body = { ok: true, unreadCount: 0, assigneeName: user.name };
+    }
     else if (path.endsWith("/media") && route.request().method() === "POST") body = { message: { id: "message-upload", conversationId: "conversation-1", direction: "outbound", type: "image", body: "Imagem de teste", fileName: "foto.png", mediaKey: "uploads/test/foto.png", duration: null, status: "sent", createdAt: now } };
     else if (path.endsWith("/messages")) body = messagePage(requestUrl);
     await route.fulfill({ contentType: "application/json", body: JSON.stringify(body) });
@@ -65,6 +71,9 @@ test("painel principal abre todos os módulos autorizados", async ({ page }, tes
   await mockDashboard(page);
   await page.goto("/");
   await expect(page.getByRole("heading", { name: "Conversas", exact: true })).toBeVisible();
+  await expect(page.getByAltText("Foto de Maria Oliveira").first()).toBeVisible();
+  await expect(page.locator(".conversation-assignee")).toContainText("Ana Karrer atendendo");
+  await expect(page.getByLabel("2 mensagens não lidas")).toHaveCount(0);
 
   await page.getByRole("button", { name: "Leads" }).click();
   await expect(page.getByRole("heading", { name: "Leads", exact: true })).toBeVisible();
@@ -106,11 +115,17 @@ test("nova conversa aparece em tempo real sem recarregar a página", async ({ pa
   additionalConversations = [{
     id: "conversation-2", contactId: "contact-2", createdAt: new Date().toISOString(), name: "Contato em tempo real", phone: "5592888888888",
     bank: null, stage: "Primeiro contato", classification: "warm", score: 50, lastMessage: "Mensagem recebida agora",
-    lastMessageType: "text", lastMessageAt: new Date().toISOString(), unreadCount: 1, online: false, lastSeenAt: null, assigneeName: null,
+    lastMessageType: "text", lastMessageAt: new Date().toISOString(), unreadCount: 1, online: false, lastSeenAt: null, assigneeName: null, avatarUrl: "/karrer-logo.png",
   }];
   inboxSocket!.send(JSON.stringify({ type: "conversation.updated" }));
 
   await expect(page.getByRole("button", { name: /Contato em tempo real/ })).toBeVisible();
+  await expect(page.getByLabel("1 mensagens não lidas")).toBeVisible();
+  const mobileBack = page.getByRole("button", { name: "Voltar às conversas" });
+  if (await mobileBack.isVisible()) await mobileBack.click();
+  await page.getByRole("button", { name: /Contato em tempo real/ }).click();
+  await expect(page.getByLabel("1 mensagens não lidas")).toHaveCount(0);
+  await expect(page.getByRole("button", { name: /Contato em tempo real/ }).locator(".conversation-assignee")).toContainText("Ana Karrer atendendo");
 });
 
 test("histórico carrega 40 mensagens e busca as anteriores ao rolar", async ({ page }) => {

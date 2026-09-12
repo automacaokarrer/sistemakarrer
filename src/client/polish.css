@@ -49,6 +49,9 @@ input:focus, select:focus, textarea:focus { border-color: #9b805e !important; bo
 .conversation-list > header h1 { font-size: 29px; }
 .conversation-list > .search-box { height: 42px; border-color: #ded7cd; box-shadow: 0 5px 16px rgb(39 33 27 / 4%); }
 .conversation-list > .chips { padding-top: 14px; }
+.conversation-assignee { display: inline-flex; align-items: center; gap: 5px; width: fit-content; max-width: 100%; margin-top: 5px; padding: 3px 8px; overflow: hidden; border: 1px solid #d9cbb8; border-radius: 999px; background: #eee6da; color: #6c563d; font-size: 9px; font-style: normal; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
+.conversation-assignee i { width: 6px; height: 6px; flex: 0 0 6px; border-radius: 50%; background: #4f8d5b; box-shadow: 0 0 0 3px rgb(79 141 91 / 12%); }
+.conversation-row time b { background: #8b6c49; box-shadow: 0 3px 9px rgb(89 67 42 / 20%); }
 .conversation-empty { display: grid; justify-items: center; gap: 6px; margin: 34px 18px; padding: 28px 18px; border: 1px dashed #d8cfc2; border-radius: 15px; color: #756c61; text-align: center; }
 .conversation-empty > span { display: grid; place-items: center; width: 42px; height: 42px; margin-bottom: 5px; border-radius: 13px; background: #ebe4da; color: #776247; }
 .conversation-empty strong { color: #3b3631; font: 500 18px "Montserrat", sans-serif; }

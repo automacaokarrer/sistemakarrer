@@ -1,6 +1,6 @@
 import { HttpError, cleanText, json, normalizePhone, readJson } from "./http";
 import type { AppEnv, SessionUser } from "./types";
-import { sendMedia, sendText } from "./zapi";
+import { fetchContactProfilePicture, sendMedia, sendText } from "./zapi";
 import { INBOX_ROOM } from "./realtime";
 
 type Classification = "hot" | "warm" | "cold";
@@ -22,6 +22,7 @@ interface ConversationRow {
   online: number;
   lastSeenAt: string | null;
   assigneeName: string | null;
+  avatarUrl: string;
 }
 
 export interface MessageRow {
@@ -74,7 +75,38 @@ export async function listConversations(env: AppEnv, url: URL): Promise<Response
   query += " ORDER BY COALESCE(c.last_message_at, c.created_at) DESC LIMIT 200";
   const prepared = env.DB.prepare(query);
   const result = await (bindings.length ? prepared.bind(...bindings) : prepared).all<ConversationRow>();
-  return json({ conversations: result.results.map((row) => ({ ...row, name: row.name ?? row.phone, online: Boolean(row.online) })) });
+  return json({ conversations: result.results.map((row) => ({ ...row, name: row.name ?? row.phone, online: Boolean(row.online), avatarUrl: `/api/contacts/${row.contactId}/avatar` })) });
+}
+
+export async function getContactAvatar(env: AppEnv, contactId: string): Promise<Response> {
+  const contact = await env.DB.prepare("SELECT phone, avatar_key AS avatarKey, avatar_checked_at AS avatarCheckedAt FROM contacts WHERE id = ?1")
+    .bind(contactId).first<{ phone: string; avatarKey: string | null; avatarCheckedAt: string | null }>();
+  if (!contact) throw new HttpError("Contato não encontrado.", 404);
+  const cacheFresh = contact.avatarCheckedAt && Date.now() - new Date(contact.avatarCheckedAt).getTime() < 7 * 24 * 60 * 60 * 1000;
+  let avatarKey = contact.avatarKey;
+  if (!cacheFresh) {
+    const checkedAt = new Date().toISOString();
+    try {
+      const picture = await fetchContactProfilePicture(env, contact.phone);
+      if (picture) {
+        avatarKey = `contact-avatars/${contactId}`;
+        await env.MEDIA.put(avatarKey, picture.body, { httpMetadata: { contentType: picture.mime } });
+        await env.DB.prepare("UPDATE contacts SET avatar_key = ?1, avatar_checked_at = ?2 WHERE id = ?3").bind(avatarKey, checkedAt, contactId).run();
+      } else {
+        await env.DB.prepare("UPDATE contacts SET avatar_checked_at = ?1 WHERE id = ?2").bind(checkedAt, contactId).run();
+      }
+    } catch {
+      await env.DB.prepare("UPDATE contacts SET avatar_checked_at = ?1 WHERE id = ?2").bind(checkedAt, contactId).run();
+    }
+  }
+  if (!avatarKey) throw new HttpError("Foto do contato indisponível.", 404);
+  const object = await env.MEDIA.get(avatarKey);
+  if (!object) throw new HttpError("Foto do contato indisponível.", 404);
+  const headers = new Headers();
+  object.writeHttpMetadata(headers);
+  headers.set("Cache-Control", "private, max-age=3600");
+  headers.set("X-Content-Type-Options", "nosniff");
+  return new Response(object.body, { headers });
 }
 
 export async function listMessages(env: AppEnv, conversationId: string, url: URL): Promise<Response> {
@@ -97,6 +129,20 @@ export async function listMessages(env: AppEnv, conversationId: string, url: URL
   const messages = result.results.slice(0, limit).reverse();
   const oldest = messages[0];
   return json({ messages, hasMore, nextCursor: hasMore && oldest ? `${oldest.createdAt}|${oldest.id}` : null });
+}
+
+export async function markConversationRead(env: AppEnv, user: SessionUser, conversationId: string): Promise<Response> {
+  const conversation = await env.DB.prepare("SELECT assignee_id AS assigneeId FROM conversations WHERE id = ?1")
+    .bind(conversationId).first<{ assigneeId: string | null }>();
+  if (!conversation) throw new HttpError("Conversa não encontrada.", 404);
+  const assignedNow = !conversation.assigneeId;
+  await env.DB.prepare("UPDATE conversations SET unread_count = 0, assignee_id = COALESCE(assignee_id, ?1), updated_at = ?2 WHERE id = ?3")
+    .bind(user.id, new Date().toISOString(), conversationId).run();
+  const assignment = await env.DB.prepare("SELECT u.name AS assigneeName FROM conversations c LEFT JOIN users u ON u.id = c.assignee_id WHERE c.id = ?1")
+    .bind(conversationId).first<{ assigneeName: string | null }>();
+  if (assignedNow) await audit(env, user, "conversation.assign", "conversation", conversationId, { assigneeId: user.id });
+  await env.CHAT_ROOMS.getByName(INBOX_ROOM).broadcast({ type: "conversation.updated", conversationId });
+  return json({ ok: true, unreadCount: 0, assigneeName: assignment?.assigneeName ?? user.name });
 }
 
 export async function sendMessage(request: Request, env: AppEnv, user: SessionUser, conversationId: string): Promise<Response> {

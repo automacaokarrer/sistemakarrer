@@ -49,6 +49,7 @@ export interface Conversation {
   online: boolean;
   lastSeenAt: string | null;
   assigneeName: string | null;
+  avatarUrl: string;
 }
 
 export interface Message {
