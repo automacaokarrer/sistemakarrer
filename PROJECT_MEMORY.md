@@ -1,6 +1,6 @@
 # Memória operacional — Karrer Atendimento
 
-Última atualização: 11 de setembro de 2026.
+Última atualização: 12 de setembro de 2026.
 
 Este arquivo registra decisões, estado de produção e procedimentos importantes do projeto. Não inclua valores de tokens, senhas, chaves privadas ou dados pessoais aqui.
 
@@ -21,8 +21,8 @@ Este arquivo registra decisões, estado de produção e procedimentos importante
 - D1: `karrer-atendimento-db`.
 - R2: `karrer-atendimento-media`.
 - Durable Object: `ChatRoom`.
-- Última versão Cloudflare validada nesta data: `5792222f-33c2-4b67-a96c-595f17439446`.
-- Commit de código correspondente: `5e97650`.
+- Última versão Cloudflare validada nesta data: `83d226be-791d-4aef-8d2c-5adbbc841176`.
+- Commit de código correspondente: `40a25f0`.
 - O endpoint protegido do webhook Z-API respondeu corretamente após o deploy.
 
 ## Funcionalidades implementadas
@@ -34,6 +34,8 @@ Este arquivo registra decisões, estado de produção e procedimentos importante
 - Presença online da equipe baseada na atividade das sessões.
 - Avatares privados armazenados no R2.
 - Chat, gestão e classificação de leads.
+- Atualização do chat em tempo real por WebSocket global e por conversa, com heartbeat e reconexão automática; novas conversas e mensagens aparecem sem atualizar a página.
+- Envio pelo chat de imagens JPG/PNG/WebP, documentos PDF/Office/CSV/TXT de até 10 MB e áudios gravados no navegador, com armazenamento privado no R2 e envio em Base64 pela Z-API.
 - Filtros, métricas e exportação CSV de leads.
 - Cadastro completo de clientes e preenchimento de endereço por CEP.
 - Upload de até 10 documentos por cliente, máximo de 10 MB por arquivo e 16 MB no total.
@@ -47,8 +49,12 @@ Este arquivo registra decisões, estado de produção e procedimentos importante
 - O Worker trata `ReceivedCallback`, `DeliveryCallback` e `MessageStatusCallback`, incluindo atualizações de status em lote.
 - Quando um envio é recusado por diferença no formato brasileiro do número, o Worker consulta o número canônico confirmado pelo WhatsApp e repete uma única vez.
 - A opção de notificar mensagens enviadas pelo próprio aparelho permanece desativada para evitar duplicidade com envios originados pelo CRM.
-- A instância está no plano `TRIAL`; a instância e o aparelho institucional estavam conectados na validação final de 11 de setembro de 2026.
-- Um envio controlado para um número autorizado foi aceito pela Z-API após usar o formato canônico retornado pela própria plataforma.
+- Após um envio controlado aceito pela Z-API para um número autorizado, o WhatsApp exibiu uma restrição temporária para iniciar novas conversas e a instância passou a constar como desconectada; não era a tela de banimento total da conta.
+- Em 12 de setembro de 2026, uma consulta somente de leitura aos endpoints oficiais retornou instância e aparelho conectados, pagamento `PAID` e vencimento em 12 de outubro de 2026. Os três callbacks principais continuavam apontando exatamente para o endpoint protegido do CRM, e o Worker de produção respondeu saudável.
+- Em 12 de setembro de 2026, uma mensagem de texto oficial recebida pelo WhatsApp chegou ao D1 com identificador da Z-API e status `received`, comprovando o fluxo de entrada depois da reconexão. O fluxo de saída e as confirmações de entrega/leitura ainda dependem de uma resposta controlada.
+- Antes de um novo teste controlado, confirmar no aparelho institucional que a restrição da Meta foi efetivamente removida. Não reiniciar a instância nem iniciar conversa sem destinatário autorizado e consentimento explícito.
+- Não enviar textos técnicos, genéricos ou com aparência de robô. Toda mensagem deve ter contexto real, identificar o atendente e a Karrer, respeitar o consentimento do destinatário e permitir que a pessoa encerre o contato.
+- Não variar textos artificialmente para contornar filtros antispam; a prioridade é uma conversa legítima e compatível com as políticas do WhatsApp.
 - Nunca registrar os valores das credenciais nem a URL completa do webhook, pois ela contém um token de autenticação.
 
 ## Google Drive — conta institucional da Karrer
@@ -87,7 +93,7 @@ npm.cmd run test:e2e
 npm.cmd run build
 ```
 
-Último resultado registrado: 14 testes unitários e 4 testes E2E aprovados, typecheck e build aprovados.
+Último resultado registrado: 16 testes unitários e 8 testes E2E aprovados, incluindo atualização em tempo real e seleção de imagem; typecheck e build aprovados.
 
 ## Migrações e deploy
 
@@ -186,13 +192,13 @@ Deploy e push são operações diferentes: o deploy publica os arquivos locais n
 
 ## Próximo passo conhecido
 
-- Confirmar o recebimento da mensagem de teste, responder pelo número autorizado e verificar a entrada e a atualização de status no chat do CRM.
+- No aparelho institucional, confirmar em `Saiba mais` que a restrição foi removida. Depois, fazer um único teste ponta a ponta com destinatário autorizado e consentimento explícito, começando de preferência pela resposta a uma mensagem recebida.
 - A página de Leads foi aprimorada localmente sem alterar sua identidade visual: o filtro de hora de entrada agora funciona de fato, os controles receberam rótulos acessíveis e os estados vazios ficaram contextuais.
 - O design de Leads foi aplicado ao Cadastro de Clientes com hero bege, quatro KPIs, contorno amarelo, cartões, hierarquia e responsividade equivalentes.
 - O formulário de clientes ganhou feedback correto de sucesso/erro, contador de documentos, autocomplete e limpeza integral de estados.
 - O Playwright agora usa exclusivamente a porta `5197` com `strictPort` e não reutiliza servidores de outros projetos.
 - Essas alterações foram publicadas e validadas em produção na versão `1fd5f9aa-a362-4ca6-9fcb-45288ea4c41c`.
-- O seed idempotente `seed/validation.sql` foi aplicado no D1 local e remoto para validação visual. Ele mantém 6 contatos/conversas fictícios identificados pelo prefixo `demo-`, distribuídos em 2 leads quentes, 2 mornos e 2 frios, com 14 mensagens de texto, áudio e documento.
-- Os telefones do seed são deliberadamente fictícios (`550000000001` a `550000000006`) e nenhuma mensagem foi enviada pela Z-API.
-- As contagens foram confirmadas diretamente no D1 remoto após a importação. A validação autenticada automatizada não usa `INITIAL_ADMIN_PASSWORD`, pois esse valor de configuração inicial pode ficar desatualizado depois que o administrador troca a senha.
+- Em 12 de setembro de 2026, os 6 contatos, 6 conversas e 14 mensagens fictícios do seed de validação foram removidos do D1 remoto. A conferência final confirmou zero registros `demo-*`; permaneceu somente a conversa oficial recebida pela Z-API.
+- Não reaplicar `seed/validation.sql` em produção. A validação autenticada automatizada não usa `INITIAL_ADMIN_PASSWORD`, pois esse valor de configuração inicial pode ficar desatualizado depois que o administrador troca a senha.
+- O chat em tempo real e os envios de áudio, imagem e documento foram publicados e validados em produção na versão `83d226be-791d-4aef-8d2c-5adbbc841176`, correspondente ao commit `40a25f0`.
 - Continua pendente configurar no Cloudflare os três secrets do Google Drive usando as credenciais da conta de serviço institucional da Karrer e repetir o deploy e o teste de upload.
