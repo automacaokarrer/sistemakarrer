@@ -21,8 +21,8 @@ Este arquivo registra decisões, estado de produção e procedimentos importante
 - D1: `karrer-atendimento-db`.
 - R2: `karrer-atendimento-media`.
 - Durable Object: `ChatRoom`.
-- Última versão Cloudflare validada nesta data: `83d226be-791d-4aef-8d2c-5adbbc841176`.
-- Commit de código correspondente: `40a25f0`.
+- Última versão Cloudflare validada nesta data: `692106cd-72f9-4920-ad3e-41b93effa8d0`.
+- Commit de código correspondente: `52241f7`.
 - O endpoint protegido do webhook Z-API respondeu corretamente após o deploy.
 
 ## Funcionalidades implementadas
@@ -35,6 +35,7 @@ Este arquivo registra decisões, estado de produção e procedimentos importante
 - Avatares privados armazenados no R2.
 - Chat, gestão e classificação de leads.
 - Atualização do chat em tempo real por WebSocket global e por conversa, com heartbeat e reconexão automática; novas conversas e mensagens aparecem sem atualizar a página.
+- O histórico abre com as 40 mensagens mais recentes e carrega blocos anteriores automaticamente ao rolar para o topo, preservando a posição de leitura. Mensagens novas só deslocam a tela quando o atendente já está próximo do fim.
 - Envio pelo chat de imagens JPG/PNG/WebP, documentos PDF/Office/CSV/TXT de até 10 MB e áudios gravados no navegador, com armazenamento privado no R2 e envio em Base64 pela Z-API.
 - Filtros, métricas e exportação CSV de leads.
 - Cadastro completo de clientes e preenchimento de endereço por CEP.
@@ -93,7 +94,7 @@ npm.cmd run test:e2e
 npm.cmd run build
 ```
 
-Último resultado registrado: 16 testes unitários e 8 testes E2E aprovados, incluindo atualização em tempo real e seleção de imagem; typecheck e build aprovados.
+Último resultado registrado: 16 testes unitários e 10 testes E2E aprovados, incluindo atualização em tempo real, paginação de 40 mensagens e seleção de imagem; typecheck e build aprovados.
 
 ## Migrações e deploy
 
@@ -201,4 +202,5 @@ Deploy e push são operações diferentes: o deploy publica os arquivos locais n
 - Em 12 de setembro de 2026, os 6 contatos, 6 conversas e 14 mensagens fictícios do seed de validação foram removidos do D1 remoto. A conferência final confirmou zero registros `demo-*`; permaneceu somente a conversa oficial recebida pela Z-API.
 - Não reaplicar `seed/validation.sql` em produção. A validação autenticada automatizada não usa `INITIAL_ADMIN_PASSWORD`, pois esse valor de configuração inicial pode ficar desatualizado depois que o administrador troca a senha.
 - O chat em tempo real e os envios de áudio, imagem e documento foram publicados e validados em produção na versão `83d226be-791d-4aef-8d2c-5adbbc841176`, correspondente ao commit `40a25f0`.
+- O carregamento progressivo do histórico foi publicado e validado em produção na versão `692106cd-72f9-4920-ad3e-41b93effa8d0`, correspondente ao commit `52241f7`.
 - Continua pendente configurar no Cloudflare os três secrets do Google Drive usando as credenciais da conta de serviço institucional da Karrer e repetir o deploy e o teste de upload.
