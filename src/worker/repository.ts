@@ -4,6 +4,7 @@ import { fetchContactProfilePicture, sendMedia, sendText } from "./zapi";
 import { INBOX_ROOM } from "./realtime";
 
 type Classification = "hot" | "warm" | "cold";
+export type ServiceStatus = "new" | "in_progress" | "waiting_customer" | "resolved";
 
 interface ConversationRow {
   id: string;
@@ -22,7 +23,10 @@ interface ConversationRow {
   online: number;
   lastSeenAt: string | null;
   assigneeName: string | null;
+  assigneeId: string | null;
   avatarUrl: string;
+  waitingSince: string | null;
+  serviceStatus: ServiceStatus;
 }
 
 export interface MessageRow {
@@ -40,7 +44,7 @@ export interface MessageRow {
 
 const conversationSelect = `SELECT c.id, c.contact_id AS contactId, c.created_at AS createdAt, COALESCE(ct.name, ct.phone) AS name,
   ct.phone, ct.bank, c.stage, c.classification, c.score, c.last_message_at AS lastMessageAt,
-  c.unread_count AS unreadCount, c.online, c.last_seen_at AS lastSeenAt, u.name AS assigneeName,
+  c.unread_count AS unreadCount, c.online, c.last_seen_at AS lastSeenAt, c.waiting_since AS waitingSince, c.service_status AS serviceStatus, c.assignee_id AS assigneeId, u.name AS assigneeName,
   (SELECT m.body FROM messages m WHERE m.conversation_id = c.id ORDER BY m.created_at DESC, m.id DESC LIMIT 1) AS lastMessage,
   (SELECT m.type FROM messages m WHERE m.conversation_id = c.id ORDER BY m.created_at DESC, m.id DESC LIMIT 1) AS lastMessageType
   FROM conversations c JOIN contacts ct ON ct.id = c.contact_id LEFT JOIN users u ON u.id = c.assignee_id`;
@@ -51,6 +55,11 @@ export const messageSelect = `SELECT id, conversation_id AS conversationId, dire
 export function classification(value: unknown): Classification {
   if (value === "hot" || value === "warm" || value === "cold") return value;
   throw new HttpError("Classificação inválida.", 422);
+}
+
+export function conversationStatus(value: unknown): ServiceStatus {
+  if (value === "new" || value === "in_progress" || value === "waiting_customer" || value === "resolved") return value;
+  throw new HttpError("Status de atendimento inválido.", 422);
 }
 
 export async function audit(env: AppEnv, user: SessionUser | null, action: string, entityType: string, entityId: string | null, metadata?: unknown): Promise<void> {
@@ -132,17 +141,46 @@ export async function listMessages(env: AppEnv, conversationId: string, url: URL
 }
 
 export async function markConversationRead(env: AppEnv, user: SessionUser, conversationId: string): Promise<Response> {
-  const conversation = await env.DB.prepare("SELECT assignee_id AS assigneeId FROM conversations WHERE id = ?1")
-    .bind(conversationId).first<{ assigneeId: string | null }>();
-  if (!conversation) throw new HttpError("Conversa não encontrada.", 404);
-  const assignedNow = !conversation.assigneeId;
-  await env.DB.prepare("UPDATE conversations SET unread_count = 0, assignee_id = COALESCE(assignee_id, ?1), updated_at = ?2 WHERE id = ?3")
-    .bind(user.id, new Date().toISOString(), conversationId).run();
-  const assignment = await env.DB.prepare("SELECT u.name AS assigneeName FROM conversations c LEFT JOIN users u ON u.id = c.assignee_id WHERE c.id = ?1")
-    .bind(conversationId).first<{ assigneeName: string | null }>();
-  if (assignedNow) await audit(env, user, "conversation.assign", "conversation", conversationId, { assigneeId: user.id });
+  const updatedAt = new Date().toISOString();
+  const readResult = await env.DB.prepare("UPDATE conversations SET unread_count = 0, waiting_since = NULL, service_status = CASE WHEN service_status = 'new' THEN 'in_progress' ELSE service_status END, updated_at = ?1 WHERE id = ?2")
+    .bind(updatedAt, conversationId).run();
+  if (!readResult.meta.changes) throw new HttpError("Conversa não encontrada.", 404);
+  const assignmentResult = await env.DB.prepare("UPDATE conversations SET assignee_id = ?1, updated_at = ?2 WHERE id = ?3 AND assignee_id IS NULL")
+    .bind(user.id, updatedAt, conversationId).run();
+  const assignment = await env.DB.prepare("SELECT c.assignee_id AS assigneeId, c.service_status AS serviceStatus, u.name AS assigneeName FROM conversations c LEFT JOIN users u ON u.id = c.assignee_id WHERE c.id = ?1")
+    .bind(conversationId).first<{ assigneeId: string; assigneeName: string | null; serviceStatus: ServiceStatus }>();
+  if (assignmentResult.meta.changes) await audit(env, user, "conversation.assign", "conversation", conversationId, { assigneeId: user.id });
   await env.CHAT_ROOMS.getByName(INBOX_ROOM).broadcast({ type: "conversation.updated", conversationId });
-  return json({ ok: true, unreadCount: 0, assigneeName: assignment?.assigneeName ?? user.name });
+  return json({ ok: true, unreadCount: 0, assigneeId: assignment?.assigneeId ?? user.id, assigneeName: assignment?.assigneeName ?? user.name, serviceStatus: assignment?.serviceStatus ?? "in_progress" });
+}
+
+export async function updateConversationAssignee(request: Request, env: AppEnv, user: SessionUser, conversationId: string): Promise<Response> {
+  const input = await readJson<{ userId?: unknown }>(request);
+  const assigneeId = input.userId === null || input.userId === "" ? null : cleanText(input.userId, 100, true);
+  let assigneeName: string | null = null;
+  if (assigneeId) {
+    const assignee = await env.DB.prepare("SELECT name FROM users WHERE id = ?1 AND active = 1 AND (role = 'admin' OR can_chat = 1)")
+      .bind(assigneeId).first<{ name: string }>();
+    if (!assignee) throw new HttpError("Selecione um atendente ativo com acesso ao chat.", 422);
+    assigneeName = assignee.name;
+  }
+  const result = await env.DB.prepare("UPDATE conversations SET assignee_id = ?1, updated_at = ?2 WHERE id = ?3")
+    .bind(assigneeId, new Date().toISOString(), conversationId).run();
+  if (!result.meta.changes) throw new HttpError("Conversa não encontrada.", 404);
+  await audit(env, user, "conversation.assign", "conversation", conversationId, { assigneeId });
+  await env.CHAT_ROOMS.getByName(INBOX_ROOM).broadcast({ type: "conversation.updated", conversationId });
+  return json({ ok: true, assigneeName });
+}
+
+export async function updateConversationStatus(request: Request, env: AppEnv, user: SessionUser, conversationId: string): Promise<Response> {
+  const input = await readJson<{ status?: unknown }>(request);
+  const status = conversationStatus(input.status);
+  const result = await env.DB.prepare("UPDATE conversations SET service_status = ?1, updated_at = ?2 WHERE id = ?3")
+    .bind(status, new Date().toISOString(), conversationId).run();
+  if (!result.meta.changes) throw new HttpError("Conversa não encontrada.", 404);
+  await audit(env, user, "conversation.status.update", "conversation", conversationId, { status });
+  await env.CHAT_ROOMS.getByName(INBOX_ROOM).broadcast({ type: "conversation.updated", conversationId });
+  return json({ ok: true, status });
 }
 
 export async function sendMessage(request: Request, env: AppEnv, user: SessionUser, conversationId: string): Promise<Response> {
@@ -155,7 +193,7 @@ export async function sendMessage(request: Request, env: AppEnv, user: SessionUs
   const createdAt = new Date().toISOString();
   await env.DB.batch([
     env.DB.prepare("INSERT INTO messages (id, conversation_id, sender_user_id, direction, type, body, status, created_at) VALUES (?1, ?2, ?3, 'outbound', 'text', ?4, 'sending', ?5)").bind(id, conversationId, user.id, body, createdAt),
-    env.DB.prepare("UPDATE conversations SET last_message_at = ?1, updated_at = ?1 WHERE id = ?2").bind(createdAt, conversationId),
+    env.DB.prepare("UPDATE conversations SET last_message_at = ?1, service_status = CASE WHEN service_status IN ('new', 'resolved') THEN 'in_progress' ELSE service_status END, updated_at = ?1 WHERE id = ?2").bind(createdAt, conversationId),
   ]);
   let status: MessageRow["status"] = "sent";
   let providerId: string | null = null;
@@ -209,7 +247,7 @@ export async function sendMediaMessage(request: Request, env: AppEnv, user: Sess
     env.DB.prepare(`INSERT INTO messages (id, conversation_id, sender_user_id, direction, type, body, media_key, file_name, mime, size, duration, status, created_at)
       VALUES (?1, ?2, ?3, 'outbound', ?4, ?5, ?6, ?7, ?8, ?9, ?10, 'sending', ?11)`)
       .bind(id, conversationId, user.id, kind, caption, mediaKey, safeName, file.type || "application/octet-stream", file.size, duration, createdAt),
-    env.DB.prepare("UPDATE conversations SET last_message_at = ?1, updated_at = ?1 WHERE id = ?2").bind(createdAt, conversationId),
+    env.DB.prepare("UPDATE conversations SET last_message_at = ?1, service_status = CASE WHEN service_status IN ('new', 'resolved') THEN 'in_progress' ELSE service_status END, updated_at = ?1 WHERE id = ?2").bind(createdAt, conversationId),
   ]);
   let status: MessageRow["status"] = "sent";
   let providerId: string | null = null;

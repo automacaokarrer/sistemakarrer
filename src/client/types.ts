@@ -1,4 +1,5 @@
 export type Classification = "hot" | "warm" | "cold";
+export type ServiceStatus = "new" | "in_progress" | "waiting_customer" | "resolved";
 
 export interface User {
   id: string;
@@ -49,7 +50,10 @@ export interface Conversation {
   online: boolean;
   lastSeenAt: string | null;
   assigneeName: string | null;
+  assigneeId: string | null;
   avatarUrl: string;
+  waitingSince: string | null;
+  serviceStatus: ServiceStatus;
 }
 
 export interface Message {

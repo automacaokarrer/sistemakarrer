@@ -16,11 +16,11 @@ async function mockDashboard(
 ) {
   const permissions = { chat: true, leads: true, clients: true, settings: true };
   const user = { id: "admin-1", name: "Ana Karrer", email: "ana@karrer.test", role: "admin", avatarUrl: null, professionalRole: "Administradora", permissions };
-  const conversationOverrides = new Map<string, { unreadCount: number; assigneeName: string }>();
+  const conversationOverrides = new Map<string, Record<string, unknown>>();
   const conversations = [{
     id: "conversation-1", contactId: "contact-1", createdAt: now, name: "Maria Oliveira", phone: "5592999999999",
     bank: "Banco Exemplo", stage: "Documentação", classification: "hot", score: 86, lastMessage: "Enviei os documentos",
-    lastMessageType: "text", lastMessageAt: now, unreadCount: 2, online: false, lastSeenAt: now, assigneeName: "Ana Karrer", avatarUrl: "/karrer-logo.png",
+    lastMessageType: "text", lastMessageAt: now, unreadCount: 2, online: false, lastSeenAt: now, waitingSince: now, serviceStatus: "new", assigneeId: "admin-1", assigneeName: "Ana Karrer", avatarUrl: "/karrer-logo.png",
   }];
   const contacts = [{
     id: "contact-1", phone: "5592999999999", name: "Maria Oliveira", cpf: null, rg: null, rgIssuer: null,
@@ -43,8 +43,21 @@ async function mockDashboard(
     else if (path === "/api/settings/users") body = { users };
     else if (/\/api\/conversations\/[^/]+\/read$/.test(path) && route.request().method() === "POST") {
       const conversationId = path.split("/").at(-2)!;
-      conversationOverrides.set(conversationId, { unreadCount: 0, assigneeName: user.name });
-      body = { ok: true, unreadCount: 0, assigneeName: user.name };
+      conversationOverrides.set(conversationId, { ...(conversationOverrides.get(conversationId) ?? {}), unreadCount: 0, waitingSince: null, serviceStatus: "in_progress", assigneeId: user.id, assigneeName: user.name });
+      body = { ok: true, unreadCount: 0, serviceStatus: "in_progress", assigneeId: user.id, assigneeName: user.name };
+    }
+    else if (/\/api\/conversations\/[^/]+\/assignee$/.test(path) && route.request().method() === "PATCH") {
+      const conversationId = path.split("/").at(-2)!;
+      const input = route.request().postDataJSON() as { userId: string | null };
+      const assignee = users.find((item) => item.id === input.userId) ?? null;
+      conversationOverrides.set(conversationId, { ...(conversationOverrides.get(conversationId) ?? {}), assigneeId: assignee?.id ?? null, assigneeName: assignee?.name ?? null });
+      body = { ok: true, assigneeName: assignee?.name ?? null };
+    }
+    else if (/\/api\/conversations\/[^/]+\/status$/.test(path) && route.request().method() === "PATCH") {
+      const conversationId = path.split("/").at(-2)!;
+      const input = route.request().postDataJSON() as { status: string };
+      conversationOverrides.set(conversationId, { ...(conversationOverrides.get(conversationId) ?? {}), serviceStatus: input.status });
+      body = { ok: true, status: input.status };
     }
     else if (path.endsWith("/media") && route.request().method() === "POST") body = { message: { id: "message-upload", conversationId: "conversation-1", direction: "outbound", type: "image", body: "Imagem de teste", fileName: "foto.png", mediaKey: "uploads/test/foto.png", duration: null, status: "sent", createdAt: now } };
     else if (path.endsWith("/messages")) body = messagePage(requestUrl);
@@ -72,8 +85,19 @@ test("painel principal abre todos os módulos autorizados", async ({ page }, tes
   await page.goto("/");
   await expect(page.getByRole("heading", { name: "Conversas", exact: true })).toBeVisible();
   await expect(page.getByAltText("Foto de Maria Oliveira").first()).toBeVisible();
+  await expect(page.getByLabel("2 mensagens não lidas")).toBeVisible();
+  await expect(page.getByText("Suas conversas em um só lugar")).toBeVisible();
+  await page.getByRole("button", { name: /Maria Oliveira/ }).click();
   await expect(page.locator(".conversation-assignee")).toContainText("Ana Karrer atendendo");
   await expect(page.getByLabel("2 mensagens não lidas")).toHaveCount(0);
+  await page.getByLabel("Direcionar atendimento").selectOption("user-2");
+  await expect(page.locator(".conversation-assignee")).toContainText("João Lima atendendo");
+  await page.getByLabel("Status do atendimento").selectOption("waiting_customer");
+  await expect(page.locator(".conversation-service-status")).toContainText("Aguardando cliente");
+  if (testInfo.project.name === "mobile") await page.getByRole("button", { name: "Voltar às conversas" }).click();
+  await page.getByRole("button", { name: "Minhas" }).click();
+  await expect(page.getByRole("button", { name: /Maria Oliveira/ })).toHaveCount(0);
+  await page.getByRole("button", { name: "Todas" }).click();
 
   await page.getByRole("button", { name: "Leads" }).click();
   await expect(page.getByRole("heading", { name: "Leads", exact: true })).toBeVisible();
@@ -115,16 +139,22 @@ test("nova conversa aparece em tempo real sem recarregar a página", async ({ pa
   additionalConversations = [{
     id: "conversation-2", contactId: "contact-2", createdAt: new Date().toISOString(), name: "Contato em tempo real", phone: "5592888888888",
     bank: null, stage: "Primeiro contato", classification: "warm", score: 50, lastMessage: "Mensagem recebida agora",
-    lastMessageType: "text", lastMessageAt: new Date().toISOString(), unreadCount: 1, online: false, lastSeenAt: null, assigneeName: null, avatarUrl: "/karrer-logo.png",
+    lastMessageType: "text", lastMessageAt: new Date().toISOString(), unreadCount: 1, online: false, lastSeenAt: null, waitingSince: new Date(new Date(now).getTime() - 5 * 60_000).toISOString(), serviceStatus: "new", assigneeId: null, assigneeName: null, avatarUrl: "/karrer-logo.png",
   }];
   inboxSocket!.send(JSON.stringify({ type: "conversation.updated" }));
 
   await expect(page.getByRole("button", { name: /Contato em tempo real/ })).toBeVisible();
-  await expect(page.getByLabel("1 mensagens não lidas")).toBeVisible();
+  await expect(page.getByLabel("1 mensagem não lida")).toBeVisible();
+  await expect(page.getByText(/Aguardando há 5 min/)).toBeVisible();
+  await page.getByLabel("Ordenar conversas").selectOption("waiting");
+  await expect(page.locator(".conversation-row").first()).toContainText("Contato em tempo real");
+  await page.getByRole("button", { name: "Não atribuídas" }).click();
+  await expect(page.getByRole("button", { name: /Maria Oliveira/ })).toHaveCount(0);
+  await page.getByRole("button", { name: "Todas" }).click();
   const mobileBack = page.getByRole("button", { name: "Voltar às conversas" });
   if (await mobileBack.isVisible()) await mobileBack.click();
   await page.getByRole("button", { name: /Contato em tempo real/ }).click();
-  await expect(page.getByLabel("1 mensagens não lidas")).toHaveCount(0);
+  await expect(page.getByLabel("1 mensagem não lida")).toHaveCount(0);
   await expect(page.getByRole("button", { name: /Contato em tempo real/ }).locator(".conversation-assignee")).toContainText("Ana Karrer atendendo");
 });
 
@@ -148,6 +178,7 @@ test("histórico carrega 40 mensagens e busca as anteriores ao rolar", async ({ 
     };
   });
   await page.goto("/");
+  await page.getByRole("button", { name: /Maria Oliveira/ }).click();
   await expect(page.getByText("Mensagem recente 40")).toBeVisible();
   expect(initialLimit).toBe("40");
 
@@ -161,6 +192,7 @@ test("ícone de imagem envia arquivo pelo compositor", async ({ page }) => {
   await page.routeWebSocket(/\/api\/conversations\/[^/]+\/ws$/, () => undefined);
   await mockDashboard(page);
   await page.goto("/");
+  await page.getByRole("button", { name: /Maria Oliveira/ }).click();
   const chooserPromise = page.waitForEvent("filechooser");
   await page.getByRole("button", { name: "Enviar imagem" }).click();
   const chooser = await chooserPromise;
@@ -192,6 +224,7 @@ test("áudio pode ser ouvido antes do envio sem bloquear a escrita", async ({ pa
   });
   await mockDashboard(page);
   await page.goto("/");
+  await page.getByRole("button", { name: /Maria Oliveira/ }).click();
   await page.getByRole("button", { name: "Gravar áudio" }).click();
   await expect(page.getByRole("button", { name: "Parar gravação" })).toBeVisible();
   await page.getByLabel("Mensagem").fill("Texto continua liberado");
@@ -212,6 +245,7 @@ test("confirmação muda de enviado para entregue e lido em tempo real", async (
   const message = { id: "outbound-1", conversationId: "conversation-1", direction: "outbound", type: "text", body: "Mensagem acompanhada", fileName: null, mediaKey: null, duration: null, status: "sent", createdAt: now };
   await mockDashboard(page, () => [], () => ({ messages: [message], hasMore: false, nextCursor: null }));
   await page.goto("/");
+  await page.getByRole("button", { name: /Maria Oliveira/ }).click();
   await expect(page.locator(".message-status")).toContainText("Enviado");
   await expect(page.getByText(/Visto por último/)).toBeVisible();
   await expect.poll(() => Boolean(conversationSocket)).toBe(true);

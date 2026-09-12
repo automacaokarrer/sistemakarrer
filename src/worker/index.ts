@@ -11,6 +11,8 @@ import {
   listConversations,
   listMessages,
   markConversationRead,
+  updateConversationAssignee,
+  updateConversationStatus,
   sendMessage,
   sendMediaMessage,
   updateClassification,
@@ -136,6 +138,18 @@ async function routeApi(request: Request, env: AppEnv): Promise<Response> {
   if (conversationRead && method === "POST") {
     requirePermission(user, "chat");
     return markConversationRead(env, user, conversationRead[1]);
+  }
+
+  const conversationAssignee = routeMatch(pathname, /^\/api\/conversations\/([^/]+)\/assignee$/);
+  if (conversationAssignee && method === "PATCH") {
+    requireAdmin(user);
+    return updateConversationAssignee(request, env, user, conversationAssignee[1]);
+  }
+
+  const conversationStatus = routeMatch(pathname, /^\/api\/conversations\/([^/]+)\/status$/);
+  if (conversationStatus && method === "PATCH") {
+    requirePermission(user, "chat");
+    return updateConversationStatus(request, env, user, conversationStatus[1]);
   }
 
   if (method === "GET" && pathname === "/api/conversations/ws") {

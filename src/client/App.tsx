@@ -3,6 +3,7 @@ import {
   CheckCheck,
   ChevronDown,
   CircleUserRound,
+  Clock3,
   Download,
   FileText,
   Image,
@@ -27,12 +28,14 @@ import {
 } from "lucide-react";
 import { FocusEvent, FormEvent, useCallback, useEffect, useRef, useState } from "react";
 import { api, formatTime, initials } from "./api";
-import type { AuthStatus, Classification, Contact, Conversation, LeadSummary, ManagedUser, Message, Permissions, User } from "./types";
+import type { AuthStatus, Classification, Contact, Conversation, LeadSummary, ManagedUser, Message, Permissions, ServiceStatus, User } from "./types";
 
 type View = "chat" | "leads" | "clients" | "lead" | "settings";
-type ConversationFilter = "all" | "unread" | "hot";
+type ConversationFilter = "all" | "mine" | "unassigned" | "unread" | "hot";
+type ConversationSort = "recent" | "waiting";
 
 const classificationLabel: Record<Classification, string> = { hot: "Quente", warm: "Morno", cold: "Frio" };
+const serviceStatusLabel: Record<ServiceStatus, string> = { new: "Nova", in_progress: "Em atendimento", waiting_customer: "Aguardando cliente", resolved: "Finalizada" };
 const resetToken = new URLSearchParams(location.search).get("reset");
 const activationEmail = new URLSearchParams(location.search).get("activate");
 const activationRequiresPassword = new URLSearchParams(location.search).get("invite") === "1";
@@ -184,7 +187,7 @@ function Dashboard({ user, googleDrive, onLogout }: { user: User; googleDrive: b
     try {
       const conversationData = await api<{ conversations: Conversation[] }>("/api/conversations");
       setConversations(conversationData.conversations);
-      setSelectedId((current) => current ?? conversationData.conversations[0]?.id ?? null);
+      setSelectedId((current) => current && conversationData.conversations.some((conversation) => conversation.id === current) ? current : null);
     } finally {
       setLoading(false);
     }
@@ -277,9 +280,9 @@ function Dashboard({ user, googleDrive, onLogout }: { user: User; googleDrive: b
   useEffect(() => {
     if (view !== "chat" || !selected || selected.unreadCount <= 0) return;
     const conversationId = selected.id;
-    setConversations((current) => current.map((item) => item.id === conversationId ? { ...item, unreadCount: 0, assigneeName: item.assigneeName ?? user.name } : item));
-    void api<{ assigneeName: string }>(`/api/conversations/${conversationId}/read`, { method: "POST" })
-      .then((result) => setConversations((current) => current.map((item) => item.id === conversationId ? { ...item, unreadCount: 0, assigneeName: result.assigneeName } : item)))
+    setConversations((current) => current.map((item) => item.id === conversationId ? { ...item, unreadCount: 0, waitingSince: null, serviceStatus: item.serviceStatus === "new" ? "in_progress" : item.serviceStatus, assigneeId: item.assigneeId ?? user.id, assigneeName: item.assigneeName ?? user.name } : item));
+    void api<{ assigneeId: string; assigneeName: string; serviceStatus: ServiceStatus }>(`/api/conversations/${conversationId}/read`, { method: "POST" })
+      .then((result) => setConversations((current) => current.map((item) => item.id === conversationId ? { ...item, unreadCount: 0, waitingSince: null, assigneeId: result.assigneeId, assigneeName: result.assigneeName, serviceStatus: result.serviceStatus } : item)))
       .catch(() => void reloadConversations());
   }, [reloadConversations, selected, user.name, view]);
 
@@ -297,7 +300,7 @@ function Dashboard({ user, googleDrive, onLogout }: { user: User; googleDrive: b
       <Sidebar view={view} user={user} unread={conversations.reduce((sum, item) => sum + item.unreadCount, 0)} onNavigate={navigate} onLogout={logout} />
       <main className="workspace">
         {loading ? <div className="page-loader"><LoaderCircle className="spin" /> Carregando atendimento...</div> : null}
-        {view === "chat" && user.permissions.chat && <ChatPage conversations={conversations} selected={selected} onSelect={setSelectedId} onOpenLead={() => setView("lead")} onRefresh={reloadConversations} />}
+        {view === "chat" && user.permissions.chat && <ChatPage currentUser={user} conversations={conversations} selected={selected} onSelect={setSelectedId} onOpenLead={() => setView("lead")} onRefresh={reloadConversations} />}
         {view === "leads" && user.permissions.leads && <LeadsPage conversations={conversations} summary={summary} onOpen={(id) => { setSelectedId(id); setView("lead"); }} onRefresh={refreshLeads} />}
         {view === "lead" && user.permissions.leads && <LeadDetail conversation={selected} onBack={() => setView("leads")} onChat={() => user.permissions.chat && setView("chat")} onRefresh={refreshLeads} />}
         {view === "clients" && user.permissions.clients && <ClientsPage contacts={contacts} googleDrive={googleDrive} onRefresh={refreshClients} />}
@@ -340,12 +343,59 @@ function Sidebar({ view, user, unread, onNavigate, onLogout }: { view: View; use
   );
 }
 
-function ChatPage({ conversations, selected, onSelect, onOpenLead, onRefresh }: { conversations: Conversation[]; selected: Conversation | null; onSelect: (id: string | null) => void; onOpenLead: () => void; onRefresh: () => Promise<void> }) {
+function ChatPage({ currentUser, conversations, selected, onSelect, onOpenLead, onRefresh }: { currentUser: User; conversations: Conversation[]; selected: Conversation | null; onSelect: (id: string | null) => void; onOpenLead: () => void; onRefresh: () => Promise<void> }) {
   const [filter, setFilter] = useState<ConversationFilter>("all");
+  const [sort, setSort] = useState<ConversationSort>("recent");
   const [search, setSearch] = useState("");
+  const [attendants, setAttendants] = useState<ManagedUser[]>([]);
+  const [assigning, setAssigning] = useState(false);
+  const [updatingStatus, setUpdatingStatus] = useState(false);
+  const [actionError, setActionError] = useState("");
+  const [now, setNow] = useState(Date.now());
+  useEffect(() => {
+    const timer = window.setInterval(() => setNow(Date.now()), 15_000);
+    return () => window.clearInterval(timer);
+  }, []);
+  useEffect(() => {
+    if (currentUser.role !== "admin") return;
+    void api<{ users: ManagedUser[] }>("/api/settings/users").then((data) => setAttendants(data.users.filter((user) => user.active && user.permissions.chat))).catch(() => setAttendants([]));
+  }, [currentUser.role]);
+  async function assign(userId: string) {
+    if (!selected || assigning) return;
+    setAssigning(true);
+    setActionError("");
+    try {
+      await api(`/api/conversations/${selected.id}/assignee`, { method: "PATCH", body: JSON.stringify({ userId: userId || null }) });
+      await onRefresh();
+    } catch (reason) {
+      setActionError(reason instanceof Error ? reason.message : "Não foi possível direcionar o atendimento.");
+    } finally { setAssigning(false); }
+  }
+  async function updateStatus(status: ServiceStatus) {
+    if (!selected || updatingStatus || status === selected.serviceStatus) return;
+    setUpdatingStatus(true);
+    setActionError("");
+    try {
+      await api(`/api/conversations/${selected.id}/status`, { method: "PATCH", body: JSON.stringify({ status }) });
+      await onRefresh();
+    } catch (reason) {
+      setActionError(reason instanceof Error ? reason.message : "Não foi possível atualizar o status.");
+    } finally { setUpdatingStatus(false); }
+  }
+  useEffect(() => setActionError(""), [selected?.id]);
   const filtered = conversations.filter((item) => {
-    const matchesFilter = filter === "all" || (filter === "unread" && item.unreadCount > 0) || (filter === "hot" && item.classification === "hot");
+    const matchesFilter = filter === "all"
+      || (filter === "mine" && item.assigneeId === currentUser.id)
+      || (filter === "unassigned" && !item.assigneeId)
+      || (filter === "unread" && item.unreadCount > 0)
+      || (filter === "hot" && item.classification === "hot");
     return matchesFilter && `${item.name} ${item.phone}`.toLowerCase().includes(search.toLowerCase());
+  }).sort((left, right) => {
+    if (sort !== "waiting") return 0;
+    if (left.waitingSince && right.waitingSince) return new Date(left.waitingSince).getTime() - new Date(right.waitingSince).getTime();
+    if (left.waitingSince) return -1;
+    if (right.waitingSince) return 1;
+    return 0;
   });
   return (
     <section className="chat-layout">
@@ -354,20 +404,23 @@ function ChatPage({ conversations, selected, onSelect, onOpenLead, onRefresh }: 
         <SearchBox value={search} onChange={setSearch} placeholder="Buscar por nome ou telefone" />
         <div className="chips">
           <Chip active={filter === "all"} onClick={() => setFilter("all")}>Todas</Chip>
+          <Chip active={filter === "mine"} onClick={() => setFilter("mine")}>Minhas</Chip>
+          <Chip active={filter === "unassigned"} onClick={() => setFilter("unassigned")}>Não atribuídas</Chip>
           <Chip active={filter === "unread"} onClick={() => setFilter("unread")}>Não lidas</Chip>
           <Chip active={filter === "hot"} onClick={() => setFilter("hot")}>Quentes</Chip>
         </div>
+        <label className="conversation-sort"><span>Ordenar</span><select aria-label="Ordenar conversas" value={sort} onChange={(event) => setSort(event.target.value as ConversationSort)}><option value="recent">Mais recentes</option><option value="waiting">Maior espera</option></select><ChevronDown size={14} /></label>
         <div className="conversation-scroll">
-          {filtered.map((conversation) => <ConversationRow key={conversation.id} conversation={conversation} active={selected?.id === conversation.id} onClick={() => onSelect(conversation.id)} />)}
+          {filtered.map((conversation) => <ConversationRow key={conversation.id} conversation={conversation} active={selected?.id === conversation.id} now={now} onClick={() => onSelect(conversation.id)} />)}
           {filtered.length === 0 && <div className="conversation-empty"><span><MessageCircle size={19} /></span><strong>Nenhuma conversa</strong><p>{search || filter !== "all" ? "Tente alterar os filtros ou a busca." : "As novas conversas do WhatsApp aparecerão aqui."}</p></div>}
         </div>
       </div>
-      {selected ? <ConversationPanel conversation={selected} onBack={() => onSelect(null)} onOpenLead={onOpenLead} onRefresh={onRefresh} /> : <div className="chat-welcome"><div className="welcome-mark"><MessageCircle size={28} /></div><span className="eyebrow">Central de atendimento</span><h2>Suas conversas em um só lugar</h2><p>Selecione um contato ao lado para visualizar o histórico e continuar o atendimento.</p><div className="welcome-features"><span><CheckCheck size={16} /> Histórico organizado</span><span><Users size={16} /> Leads integrados</span><span><ShieldCheck size={16} /> Dados protegidos</span></div><small><i /> Aguardando novas mensagens</small></div>}
+      {selected ? <ConversationPanel conversation={selected} attendants={attendants} canAssign={currentUser.role === "admin"} assigning={assigning} updatingStatus={updatingStatus} actionError={actionError} onAssign={assign} onStatus={updateStatus} onBack={() => onSelect(null)} onOpenLead={onOpenLead} onRefresh={onRefresh} /> : <div className="chat-welcome"><div className="welcome-mark"><MessageCircle size={28} /></div><span className="eyebrow">Central de atendimento</span><h2>Suas conversas em um só lugar</h2><p>Selecione um contato ao lado para visualizar o histórico e continuar o atendimento.</p><div className="welcome-features"><span><CheckCheck size={16} /> Histórico organizado</span><span><Users size={16} /> Leads integrados</span><span><ShieldCheck size={16} /> Dados protegidos</span></div><small><i /> Aguardando novas mensagens</small></div>}
     </section>
   );
 }
 
-function ConversationPanel({ conversation, onBack, onOpenLead, onRefresh }: { conversation: Conversation; onBack: () => void; onOpenLead: () => void; onRefresh: () => Promise<void> }) {
+function ConversationPanel({ conversation, attendants, canAssign, assigning, updatingStatus, actionError, onAssign, onStatus, onBack, onOpenLead, onRefresh }: { conversation: Conversation; attendants: ManagedUser[]; canAssign: boolean; assigning: boolean; updatingStatus: boolean; actionError: string; onAssign: (userId: string) => Promise<void>; onStatus: (status: ServiceStatus) => Promise<void>; onBack: () => void; onOpenLead: () => void; onRefresh: () => Promise<void> }) {
   const [messages, setMessages] = useState<Message[]>([]);
   const [text, setText] = useState("");
   const [loading, setLoading] = useState(false);
@@ -565,8 +618,11 @@ function ConversationPanel({ conversation, onBack, onOpenLead, onRefresh }: { co
       <header className="chat-header">
         <button className="mobile-back" aria-label="Voltar às conversas" onClick={onBack}><ArrowLeft size={20} /></button>
         <Avatar name={conversation.name} imageUrl={conversation.avatarUrl} online={conversation.online} />
-        <div><h2>{conversation.name}</h2><p>{conversation.online ? <em>Online</em> : conversation.lastSeenAt ? `Visto por último ${new Date(conversation.lastSeenAt).toLocaleString("pt-BR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" })}` : "Visto por último indisponível"} <ClassificationBadge value={conversation.classification} /></p></div>
+        <div className="chat-contact"><h2>{conversation.name}</h2><p>{conversation.online ? <em>Online</em> : conversation.lastSeenAt ? `Visto por último ${new Date(conversation.lastSeenAt).toLocaleString("pt-BR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" })}` : "Visto por último indisponível"} <ClassificationBadge value={conversation.classification} /></p></div>
+        <label className={`service-status-picker ${conversation.serviceStatus} ${canAssign ? "" : "solo"}`} title="Atualizar status do atendimento"><span>Status</span><select aria-label="Status do atendimento" value={conversation.serviceStatus} disabled={updatingStatus} onChange={(event) => void onStatus(event.target.value as ServiceStatus)}>{Object.entries(serviceStatusLabel).map(([value, label]) => <option value={value} key={value}>{label}</option>)}</select><ChevronDown size={14} /></label>
+        {canAssign && <label className="assignee-picker" title="Direcionar atendimento"><Users size={15} /><span>Atendente</span><select aria-label="Direcionar atendimento" value={conversation.assigneeId ?? ""} disabled={assigning} onChange={(event) => void onAssign(event.target.value)}><option value="">Não atribuído</option>{attendants.map((attendant) => <option value={attendant.id} key={attendant.id}>{attendant.name}</option>)}</select><ChevronDown size={14} /></label>}
         <button className="primary" onClick={onOpenLead}>Ver ficha do lead</button><button className="icon-button"><Menu size={19} /></button>
+        {actionError && <div className="chat-action-error" role="alert">{actionError}</div>}
       </header>
       <div ref={messagesRef} className="messages" onScroll={(event) => { if (event.currentTarget.scrollTop < 120) void loadOlderMessages(); }}>
         {loading && <div className="loading-messages"><LoaderCircle className="spin" size={15} /> Carregando mensagens...</div>}
@@ -891,7 +947,16 @@ function Modal({ title, subtitle, tone, onClose, children }: { title: string; su
   return <div className="modal-backdrop" role="presentation" onMouseDown={(event) => event.target === event.currentTarget && onClose()}><section className={`modal-card ${tone ?? ""}`} role="dialog" aria-modal="true" aria-label={title}><button className="modal-close" onClick={onClose} aria-label="Fechar"><X size={18} /></button><div className="modal-mark">{tone === "danger" ? <Trash2 /> : <ShieldCheck />}</div><h2>{title}</h2><p>{subtitle}</p>{children}</section></div>;
 }
 
-function ConversationRow({ conversation, active, onClick }: { conversation: Conversation; active: boolean; onClick: () => void }) { return <button className={`conversation-row ${active ? "active" : ""}`} onClick={onClick}><Avatar name={conversation.name} imageUrl={conversation.avatarUrl} online={conversation.online} size="sm" /><span><strong>{conversation.name}</strong><small>{conversation.lastMessageType === "audio" ? "Áudio" : conversation.lastMessage ?? conversation.stage}</small>{conversation.assigneeName && <em className="conversation-assignee"><i />{conversation.assigneeName} atendendo</em>}</span><time>{formatTime(conversation.lastMessageAt)}{conversation.unreadCount > 0 && <b aria-label={`${conversation.unreadCount} mensagens não lidas`}>{conversation.unreadCount}</b>}</time></button>; }
+function formatWaitingTime(waitingSince: string, now: number): string {
+  const minutes = Math.max(0, Math.floor((now - new Date(waitingSince).getTime()) / 60_000));
+  if (minutes < 1) return "menos de 1 min";
+  if (minutes < 60) return `${minutes} min`;
+  const hours = Math.floor(minutes / 60);
+  const rest = minutes % 60;
+  return rest ? `${hours}h ${rest}min` : `${hours}h`;
+}
+
+function ConversationRow({ conversation, active, now, onClick }: { conversation: Conversation; active: boolean; now: number; onClick: () => void }) { return <button className={`conversation-row ${active ? "active" : ""}`} onClick={onClick}><Avatar name={conversation.name} imageUrl={conversation.avatarUrl} online={conversation.online} size="sm" /><span><strong>{conversation.name}</strong><small>{conversation.lastMessageType === "audio" ? "Áudio" : conversation.lastMessage ?? conversation.stage}</small><span className="conversation-meta"><em className={`conversation-service-status ${conversation.serviceStatus}`}>{serviceStatusLabel[conversation.serviceStatus]}</em>{conversation.waitingSince && <em className="conversation-waiting"><Clock3 size={11} />Aguardando há {formatWaitingTime(conversation.waitingSince, now)}</em>}{conversation.assigneeName && <em className="conversation-assignee"><i />{conversation.assigneeName} atendendo</em>}</span></span><time>{formatTime(conversation.lastMessageAt)}{conversation.unreadCount > 0 && <b aria-label={`${conversation.unreadCount} ${conversation.unreadCount === 1 ? "mensagem não lida" : "mensagens não lidas"}`}>{conversation.unreadCount}</b>}</time></button>; }
 function Brand() { return <div className="brand"><img src="/karrer-logo.png" alt="Karrer & Advogados" /></div>; }
 function Avatar({ name, imageUrl, online, size = "md" }: { name: string | null; imageUrl?: string | null; online?: boolean; size?: "xs" | "sm" | "md" }) { const [failed, setFailed] = useState(false); useEffect(() => setFailed(false), [imageUrl]); return <div className={`avatar ${size}`}>{imageUrl && !failed ? <img src={imageUrl} alt={`Foto de ${name ?? "usuário"}`} loading="lazy" onError={() => setFailed(true)} /> : initials(name)}{online && <i />}</div>; }
 function ClassificationBadge({ value }: { value: Classification }) { return <span className={`badge ${value}`}>Lead {classificationLabel[value].toLowerCase()}</span>; }

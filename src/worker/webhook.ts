@@ -82,6 +82,8 @@ export async function handleZApiWebhook(request: Request, env: AppEnv, suppliedT
         incoming.direction === "inbound" ? "received" : "sent", incoming.zapiMessageId, incoming.createdAt),
     env.DB.prepare(`UPDATE conversations SET last_message_at = ?1,
       unread_count = unread_count + CASE WHEN ?2 = 'inbound' THEN 1 ELSE 0 END,
+      waiting_since = CASE WHEN ?2 = 'inbound' AND unread_count = 0 THEN ?1 ELSE waiting_since END,
+      service_status = CASE WHEN ?2 = 'inbound' AND service_status IN ('waiting_customer', 'resolved') THEN 'new' ELSE service_status END,
       last_seen_at = CASE WHEN ?2 = 'inbound' THEN ?1 ELSE last_seen_at END,
       updated_at = ?1 WHERE id = ?3`)
       .bind(incoming.createdAt, incoming.direction, conversation.id),
