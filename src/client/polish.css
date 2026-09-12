@@ -503,7 +503,11 @@ input:focus, select:focus, textarea:focus { border-color: #9b805e !important; bo
 .clients-page .recent-card > header h2 { color: #111; font-size: 21px; }
 .clients-page .recent-card > header > strong { min-width: 29px; padding: 4px 7px; border-radius: 5px; background: var(--lead-accent); color: #111; font-size: 12px; text-align: center; }
 .clients-page .recent-list { overflow: hidden; border: 1px solid #bcb3a3; border-radius: 9px; background: #fff; }
-.clients-page .recent-person { min-height: 58px; border: 0; border-bottom: 1px solid #e1dcd3; background: #fff; }
+.clients-page .recent-hint { margin: -4px 0 10px; color: #665e52; font-size: 10px; }
+.clients-page .recent-list { max-height: 520px; overflow-y: auto; }
+.clients-page .recent-person { width: 100%; min-height: 58px; border: 0; border-bottom: 1px solid #e1dcd3; background: #fff; text-align: left; cursor: pointer; }
+.clients-page .recent-person:hover, .clients-page .recent-person.selected { background: #fff8e8; }
+.clients-page .recent-person.selected { box-shadow: inset 3px 0 var(--lead-accent); }
 .clients-page .recent-person:last-child { border-bottom: 0; }
 .clients-page .recent-person strong { color: #24211e; font-size: 11px; }
 .clients-page .recent-person small { font-size: 9px; }

@@ -291,7 +291,8 @@ export async function updateClassification(request: Request, env: AppEnv, user: 
 export async function listContacts(env: AppEnv): Promise<Response> {
   const result = await env.DB.prepare(`SELECT id, phone, name, cpf, rg, rg_issuer AS rgIssuer, birth_date AS birthDate, email,
     address_line AS addressLine, city, state, postal_code AS postalCode, bank, ccb, profile_complete AS profileComplete,
-    created_at AS createdAt FROM contacts ORDER BY created_at DESC LIMIT 300`).all<Record<string, unknown>>();
+    created_at AS createdAt, (SELECT classification FROM conversations WHERE contact_id = contacts.id) AS classification
+    FROM contacts ORDER BY created_at DESC LIMIT 300`).all<Record<string, unknown>>();
   return json({ contacts: result.results.map((row) => ({ ...row, profileComplete: Boolean(row.profileComplete) })) });
 }
 
@@ -306,24 +307,65 @@ function validCpf(raw: string): boolean {
   return true;
 }
 
-export async function createContact(request: Request, env: AppEnv, user: SessionUser): Promise<Response> {
-  const input = await readJson<Record<string, unknown>>(request);
-  const name = cleanText(input.name, 120, true)!;
+export function contactInput(input: Record<string, unknown>, editing = false) {
+  const name = cleanText(input.name, 120, !editing);
   const phone = normalizePhone(input.phone);
   const cpf = String(input.cpf ?? "").replace(/\D/g, "");
-  if (!validCpf(cpf)) throw new HttpError("CPF inválido.", 422);
+  if ((!editing || cpf) && !validCpf(cpf)) throw new HttpError("CPF inválido.", 422);
+  const email = cleanText(input.email, 180);
+  if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) throw new HttpError("E-mail inválido.", 422);
+  const birthDate = cleanText(input.birthDate, 20);
+  if (birthDate && (!/^\d{4}-\d{2}-\d{2}$/.test(birthDate) || Number.isNaN(Date.parse(birthDate)))) throw new HttpError("Data de nascimento inválida.", 422);
+  const state = cleanText(input.state, 2);
+  if (state && !/^[a-zA-Z]{2}$/.test(state)) throw new HttpError("UF inválida.", 422);
+  return {
+    name, phone, cpf: cpf || null, rg: cleanText(input.rg, 40), rgIssuer: cleanText(input.rgIssuer, 40), birthDate, email,
+    addressLine: cleanText(input.addressLine, 240), city: cleanText(input.city, 100), state: state?.toUpperCase() ?? null,
+    postalCode: cleanText(input.postalCode, 12), bank: cleanText(input.bank, 120), ccb: cleanText(input.ccb, 80),
+    classification: classification(input.classification ?? "warm"), profileComplete: Boolean(name && cpf),
+  };
+}
+
+export async function createContact(request: Request, env: AppEnv, user: SessionUser): Promise<Response> {
+  const input = await readJson<Record<string, unknown>>(request);
+  const data = contactInput(input);
   const id = crypto.randomUUID();
   const conversationId = crypto.randomUUID();
-  const kind = classification(input.classification ?? "warm");
+  const duplicate = await env.DB.prepare("SELECT id FROM contacts WHERE phone = ?1 OR cpf = ?2 LIMIT 1").bind(data.phone, data.cpf).first();
+  if (duplicate) throw new HttpError("WhatsApp ou CPF já cadastrado.", 409);
   await env.DB.batch([
-    env.DB.prepare(`INSERT INTO contacts (id, phone, name, cpf, rg, birth_date, email, address_line, city, state, postal_code, bank, ccb, profile_complete)
-      VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, 1)`)
-      .bind(id, phone, name, cpf, cleanText(input.rg, 40), cleanText(input.birthDate, 20), cleanText(input.email, 180), cleanText(input.addressLine, 240), cleanText(input.city, 100), cleanText(input.state, 2), cleanText(input.postalCode, 12), cleanText(input.bank, 120), cleanText(input.ccb, 80)),
+    env.DB.prepare(`INSERT INTO contacts (id, phone, name, cpf, rg, rg_issuer, birth_date, email, address_line, city, state, postal_code, bank, ccb, profile_complete)
+      VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, 1)`)
+      .bind(id, data.phone, data.name, data.cpf, data.rg, data.rgIssuer, data.birthDate, data.email, data.addressLine, data.city, data.state, data.postalCode, data.bank, data.ccb),
     env.DB.prepare("INSERT INTO conversations (id, contact_id, assignee_id, classification, classification_source, score) VALUES (?1, ?2, ?3, ?4, 'manual', ?5)")
-      .bind(conversationId, id, user.id, kind, kind === "hot" ? 75 : kind === "warm" ? 50 : 25),
+      .bind(conversationId, id, user.id, data.classification, data.classification === "hot" ? 75 : data.classification === "warm" ? 50 : 25),
   ]);
   await audit(env, user, "contact.create", "contact", id);
   return json({ id, conversationId }, { status: 201 });
+}
+
+export async function updateContact(request: Request, env: AppEnv, user: SessionUser, contactId: string): Promise<Response> {
+  const input = await readJson<Record<string, unknown>>(request);
+  const data = contactInput(input, true);
+  const existing = await env.DB.prepare("SELECT id FROM contacts WHERE id = ?1").bind(contactId).first();
+  if (!existing) throw new HttpError("Cliente não encontrado.", 404);
+  const duplicate = await env.DB.prepare("SELECT id FROM contacts WHERE id <> ?1 AND (phone = ?2 OR cpf = ?3) LIMIT 1")
+    .bind(contactId, data.phone, data.cpf).first();
+  if (duplicate) throw new HttpError("WhatsApp ou CPF já cadastrado em outro cliente.", 409);
+  const updatedAt = new Date().toISOString();
+  await env.DB.batch([
+    env.DB.prepare(`UPDATE contacts SET phone = ?1, name = ?2, cpf = ?3, rg = ?4, rg_issuer = ?5, birth_date = ?6, email = ?7,
+      address_line = ?8, city = ?9, state = ?10, postal_code = ?11, bank = ?12, ccb = ?13, profile_complete = ?14, updated_at = ?15,
+      avatar_key = CASE WHEN phone <> ?1 THEN NULL ELSE avatar_key END,
+      avatar_checked_at = CASE WHEN phone <> ?1 THEN NULL ELSE avatar_checked_at END WHERE id = ?16`)
+      .bind(data.phone, data.name, data.cpf, data.rg, data.rgIssuer, data.birthDate, data.email, data.addressLine,
+        data.city, data.state, data.postalCode, data.bank, data.ccb, data.profileComplete ? 1 : 0, updatedAt, contactId),
+    env.DB.prepare(`UPDATE conversations SET classification = ?1, classification_source = 'manual', score = ?2, updated_at = ?3 WHERE contact_id = ?4`)
+      .bind(data.classification, data.classification === "hot" ? 75 : data.classification === "warm" ? 50 : 25, updatedAt, contactId),
+  ]);
+  await audit(env, user, "contact.update", "contact", contactId, { profileComplete: data.profileComplete });
+  await env.CHAT_ROOMS.getByName(INBOX_ROOM).broadcast({ type: "conversation.updated" });
+  return json({ ok: true, id: contactId, profileComplete: data.profileComplete });
 }
 
 export async function addNote(request: Request, env: AppEnv, user: SessionUser, conversationId: string): Promise<Response> {

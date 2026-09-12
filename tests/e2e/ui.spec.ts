@@ -39,6 +39,11 @@ async function mockDashboard(
     if (path === "/api/auth/status") body = { setupRequired: false, user, features: { googleDrive: false } };
     else if (path === "/api/conversations") body = { conversations: [...conversations, ...additionalConversations()].map((conversation: any) => ({ ...conversation, ...(conversationOverrides.get(conversation.id) ?? {}) })) };
     else if (path === "/api/contacts") body = { contacts };
+    else if (path === "/api/contacts/contact-1" && route.request().method() === "PATCH") {
+      const input = route.request().postDataJSON() as Record<string, string>;
+      Object.assign(contacts[0], input, { profileComplete: Boolean(input.name && input.cpf) });
+      body = { ok: true, id: "contact-1", profileComplete: contacts[0].profileComplete };
+    }
     else if (path === "/api/leads/summary") body = { total: 1, hot: 1, warm: 0, cold: 0, averageFirstResponseMinutes: 4, daily: [] };
     else if (path === "/api/settings/users") body = { users };
     else if (/\/api\/conversations\/[^/]+\/read$/.test(path) && route.request().method() === "POST") {
@@ -114,6 +119,21 @@ test("painel principal abre todos os módulos autorizados", async ({ page }, tes
   await expect(page.getByRole("heading", { name: "Cadastro de clientes" })).toBeVisible();
   await expect(page.getByText("Cadastros completos")).toBeVisible();
   await expect(page.getByText("Com banco informado")).toBeVisible();
+  await page.getByRole("button", { name: "Editar Maria Oliveira" }).click();
+  await expect(page.getByRole("heading", { name: "Editar cliente" })).toBeVisible();
+  await expect(page.locator('.client-form [name="phone"]')).toHaveValue("5592999999999");
+  await page.locator('.client-form [name="cpf"]').fill("11144477735");
+  await page.locator('.client-form [name="bank"]').fill("Banco Atualizado");
+  await page.locator('.client-form [name="rgIssuer"]').fill("SSP-AM");
+  await page.locator('.client-form [name="classification"]').selectOption("cold");
+  await page.getByRole("button", { name: "Salvar alterações" }).click();
+  await expect(page.getByRole("status")).toContainText("Dados do cliente atualizados no banco.");
+  await expect(page.locator(".recent-person.selected")).toContainText("Banco Atualizado");
+  await page.getByRole("button", { name: "Novo cliente" }).click();
+  await page.getByRole("button", { name: "Editar Maria Oliveira" }).click();
+  await expect(page.locator('.client-form [name="cpf"]')).toHaveValue("11144477735");
+  await expect(page.locator('.client-form [name="rgIssuer"]')).toHaveValue("SSP-AM");
+  await expect(page.locator('.client-form [name="classification"]')).toHaveValue("cold");
   if (testInfo.project.name === "desktop") await testInfo.attach("clients-page", { body: await page.screenshot({ fullPage: true }), contentType: "image/png" });
   if (process.env.CAPTURE_UI) await page.screenshot({ path: `tmp/${testInfo.project.name}-clients-page.png`, fullPage: true });
 

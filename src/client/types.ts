@@ -85,6 +85,7 @@ export interface Contact {
   bank: string | null;
   ccb: string | null;
   profileComplete: boolean;
+  classification: Classification | null;
   createdAt: string;
 }
 

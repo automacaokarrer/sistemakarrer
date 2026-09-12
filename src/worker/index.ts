@@ -4,6 +4,7 @@ import { HttpError, error, json, routeMatch } from "./http";
 import {
   addNote,
   createContact,
+  updateContact,
   getContactAvatar,
   getMedia,
   leadSummary,
@@ -94,6 +95,11 @@ async function routeApi(request: Request, env: AppEnv): Promise<Response> {
   if (method === "POST" && pathname === "/api/contacts") {
     requirePermission(user, "clients");
     return createContact(request, env, user);
+  }
+  const contactEdit = routeMatch(pathname, /^\/api\/contacts\/([^/]+)$/);
+  if (method === "PATCH" && contactEdit) {
+    requirePermission(user, "clients");
+    return updateContact(request, env, user, contactEdit[1]);
   }
   if (method === "POST" && pathname === "/api/media") {
     requireAnyPermission(user, ["chat", "clients"]);
