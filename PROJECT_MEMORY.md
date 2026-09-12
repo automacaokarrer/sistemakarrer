@@ -21,8 +21,8 @@ Este arquivo registra decisões, estado de produção e procedimentos importante
 - D1: `karrer-atendimento-db`.
 - R2: `karrer-atendimento-media`.
 - Durable Object: `ChatRoom`.
-- Última versão Cloudflare validada nesta data: `0baffa39-f103-44e0-8cb8-12dfd1477425`.
-- Commit de código correspondente: `2cec92e`.
+- Última versão Cloudflare validada nesta data: `131eda96-db83-4226-8e1f-c675b27f3cb3`.
+- Commit de código correspondente: `08d5b81`.
 - O endpoint protegido do webhook Z-API respondeu corretamente após o deploy.
 
 ## Funcionalidades implementadas
@@ -38,6 +38,7 @@ Este arquivo registra decisões, estado de produção e procedimentos importante
 - O histórico abre com as 40 mensagens mais recentes e carrega blocos anteriores automaticamente ao rolar para o topo, preservando a posição de leitura. Mensagens novas só deslocam a tela quando o atendente já está próximo do fim.
 - Envio pelo chat de imagens JPG/PNG/WebP, documentos PDF/Office/CSV/TXT de até 10 MB e áudios gravados no navegador, com armazenamento privado no R2 e envio em Base64 pela Z-API.
 - Imagens e áudios possuem prévia antes do envio; o áudio pode ser ouvido e descartado. O compositor de texto permanece liberado durante gravação, prévia e upload de mídia.
+- A prévia de áudio usa um player próprio e responsivo, com ouvir/pausar, barra de progresso, tempo decorrido/total e ações claras para descartar ou enviar.
 - Confirmações de mensagem mudam em tempo real entre enviado, entregue e lido. O cabeçalho exibe presença e visto por último quando a Z-API fornece esses eventos.
 - Na administração, clicar em um usuário abre um modal de perfil com foto, função, presença, conta e permissões. Alterações de acessos continuam exclusivas do administrador mestre e protegidas pela API.
 - Telefones brasileiros são apresentados com DDD e nono dígito, inclusive quando a origem ainda fornece um número móvel antigo de oito dígitos.
@@ -210,4 +211,5 @@ Deploy e push são operações diferentes: o deploy publica os arquivos locais n
 - O carregamento progressivo do histórico foi publicado e validado em produção na versão `692106cd-72f9-4920-ad3e-41b93effa8d0`, correspondente ao commit `52241f7`.
 - As prévias de mídia, confirmação de leitura em tempo real, presença/visto por último, modal completo de usuário e telefone com nono dígito foram publicados e validados em produção na versão `0baffa39-f103-44e0-8cb8-12dfd1477425`, correspondente ao commit `2cec92e`.
 - O callback de presença da Z-API foi cadastrado após autorização explícita e está direcionado ao endpoint protegido já processado pelo Worker.
+- O player redesenhado de prévia de áudio foi publicado e validado em produção na versão `131eda96-db83-4226-8e1f-c675b27f3cb3`, correspondente ao commit `08d5b81`.
 - Continua pendente configurar no Cloudflare os três secrets do Google Drive usando as credenciais da conta de serviço institucional da Karrer e repetir o deploy e o teste de upload.
