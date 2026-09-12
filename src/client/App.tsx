@@ -14,6 +14,8 @@ import {
   MessageCircle,
   Mic,
   Paperclip,
+  Pause,
+  Play,
   Plus,
   Search,
   Send,
@@ -566,13 +568,17 @@ function ConversationPanel({ conversation, onBack, onOpenLead, onRefresh }: { co
         {!loading && messages.length === 0 && <Empty text="Ainda não há mensagens nesta conversa." dark />}
         <div ref={endRef} />
       </div>
-      {pendingAttachment && <div className="attachment-preview" role="region" aria-label="Prévia do arquivo">
-        {pendingAttachment.kind === "image" && pendingAttachment.previewUrl && <img src={pendingAttachment.previewUrl} alt="Prévia da imagem" />}
-        {pendingAttachment.kind === "audio" && pendingAttachment.previewUrl && <audio controls src={pendingAttachment.previewUrl} />}
-        {pendingAttachment.kind === "document" && <FileText size={30} />}
-        <span><strong>{pendingAttachment.file.name}</strong><small>{pendingAttachment.kind === "audio" ? "Ouça antes de enviar" : pendingAttachment.kind === "image" ? "Confira a imagem antes de enviar" : "Documento selecionado"}</small></span>
-        <button type="button" className="outline" disabled={uploadingMedia} onClick={() => setPendingAttachment(null)}><X size={16} /> Cancelar</button>
-        <button type="button" className="primary" disabled={uploadingMedia} onClick={() => void sendAttachment(pendingAttachment.file, pendingAttachment.kind, pendingAttachment.duration)}>{uploadingMedia ? <LoaderCircle className="spin" size={16} /> : <Send size={16} />} {uploadingMedia ? "Enviando..." : "Enviar arquivo"}</button>
+      {pendingAttachment && <div className={`attachment-preview ${pendingAttachment.kind}`} role="region" aria-label="Prévia do arquivo">
+        <div className="attachment-preview-content">
+          {pendingAttachment.kind === "image" && pendingAttachment.previewUrl && <img src={pendingAttachment.previewUrl} alt="Prévia da imagem" />}
+          {pendingAttachment.kind === "audio" && pendingAttachment.previewUrl && <AudioPreview src={pendingAttachment.previewUrl} recordedDuration={pendingAttachment.duration} />}
+          {pendingAttachment.kind === "document" && <><span className="attachment-file-icon"><FileText size={25} /></span><span className="attachment-copy"><strong>{pendingAttachment.file.name}</strong><small>Documento selecionado</small></span></>}
+          {pendingAttachment.kind === "image" && <span className="attachment-copy"><strong>{pendingAttachment.file.name}</strong><small>Confira a imagem antes de enviar</small></span>}
+        </div>
+        <div className="attachment-preview-actions">
+          <button type="button" className="outline" disabled={uploadingMedia} onClick={() => setPendingAttachment(null)}><X size={16} /> {pendingAttachment.kind === "audio" ? "Descartar" : "Cancelar"}</button>
+          <button type="button" className="primary" disabled={uploadingMedia} onClick={() => void sendAttachment(pendingAttachment.file, pendingAttachment.kind, pendingAttachment.duration)}>{uploadingMedia ? <LoaderCircle className="spin" size={16} /> : <Send size={16} />} {uploadingMedia ? "Enviando..." : pendingAttachment.kind === "audio" ? "Enviar áudio" : "Enviar arquivo"}</button>
+        </div>
       </div>}
       <form className="composer" onSubmit={sendMessage}>
         <input ref={documentInputRef} className="composer-file-input" type="file" accept=".pdf,.doc,.docx,.xls,.xlsx,.csv,.txt" onChange={(event) => { const file = event.target.files?.[0]; if (file) stageAttachment(file, "document"); event.currentTarget.value = ""; }} />
@@ -837,6 +843,38 @@ function SettingsPage({ currentUser }: { currentUser: User }) {
 function Toggle({ checked, defaultChecked, disabled, label, name, onChange }: { checked?: boolean; defaultChecked?: boolean; disabled?: boolean; label: string; name?: string; onChange?: (checked: boolean) => void }) {
   const state = checked === undefined ? { defaultChecked } : { checked };
   return <label className="toggle" title={label}><input type="checkbox" name={name} {...state} disabled={disabled} onChange={(event) => onChange?.(event.target.checked)} /><span /></label>;
+}
+
+function formatAudioDuration(seconds: number): string {
+  const safe = Number.isFinite(seconds) ? Math.max(0, Math.floor(seconds)) : 0;
+  return `${Math.floor(safe / 60)}:${String(safe % 60).padStart(2, "0")}`;
+}
+
+function AudioPreview({ src, recordedDuration }: { src: string; recordedDuration?: number }) {
+  const audioRef = useRef<HTMLAudioElement>(null);
+  const [playing, setPlaying] = useState(false);
+  const [currentTime, setCurrentTime] = useState(0);
+  const [duration, setDuration] = useState(recordedDuration ?? 0);
+
+  function togglePlayback() {
+    const audio = audioRef.current;
+    if (!audio) return;
+    if (audio.paused) void audio.play(); else audio.pause();
+  }
+
+  function seek(value: number) {
+    const audio = audioRef.current;
+    if (!audio) return;
+    audio.currentTime = value;
+    setCurrentTime(value);
+  }
+
+  return <div className="audio-preview-player">
+    <audio ref={audioRef} src={src} preload="metadata" onLoadedMetadata={(event) => setDuration(Number.isFinite(event.currentTarget.duration) ? event.currentTarget.duration : recordedDuration ?? 0)} onTimeUpdate={(event) => setCurrentTime(event.currentTarget.currentTime)} onPlay={() => setPlaying(true)} onPause={() => setPlaying(false)} onEnded={() => setPlaying(false)} />
+    <button type="button" className="audio-preview-play" onClick={togglePlayback} aria-label={playing ? "Pausar prévia do áudio" : "Ouvir prévia do áudio"}>{playing ? <Pause size={19} fill="currentColor" /> : <Play size={19} fill="currentColor" />}</button>
+    <span className="audio-preview-mic"><Mic size={18} /></span>
+    <div className="audio-preview-body"><span><strong>Prévia do áudio</strong><small>Ouça antes de enviar</small></span><div className="audio-preview-track"><input type="range" min={0} max={Math.max(duration, 0.1)} step="0.01" value={Math.min(currentTime, Math.max(duration, 0.1))} onChange={(event) => seek(Number(event.target.value))} aria-label="Posição da prévia do áudio" style={{ "--audio-progress": `${duration ? (currentTime / duration) * 100 : 0}%` } as React.CSSProperties} /><time>{formatAudioDuration(currentTime)} / {formatAudioDuration(duration)}</time></div></div>
+  </div>;
 }
 
 function Modal({ title, subtitle, tone, onClose, children }: { title: string; subtitle: string; tone?: "danger"; onClose: () => void; children: React.ReactNode }) {

@@ -160,7 +160,7 @@ test("ícone de imagem envia arquivo pelo compositor", async ({ page }) => {
   await expect(page.getByRole("button", { name: "Gravar áudio" })).toBeEnabled();
 });
 
-test("áudio pode ser ouvido antes do envio sem bloquear a escrita", async ({ page }) => {
+test("áudio pode ser ouvido antes do envio sem bloquear a escrita", async ({ page }, testInfo) => {
   await page.addInitScript(() => {
     const track = { stop: () => undefined };
     Object.defineProperty(navigator, "mediaDevices", { configurable: true, value: { getUserMedia: async () => ({ getTracks: () => [track] }) } });
@@ -183,7 +183,11 @@ test("áudio pode ser ouvido antes do envio sem bloquear a escrita", async ({ pa
   await expect(page.getByLabel("Mensagem")).toBeEditable();
   await page.getByRole("button", { name: "Parar gravação" }).click();
   await expect(page.getByText("Ouça antes de enviar")).toBeVisible();
-  await expect(page.locator(".attachment-preview audio")).toBeVisible();
+  await expect(page.getByRole("button", { name: "Ouvir prévia do áudio" })).toBeVisible();
+  await expect(page.getByRole("slider", { name: "Posição da prévia do áudio" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Enviar áudio" })).toBeVisible();
+  await expect(page.locator(".attachment-preview audio")).toBeAttached();
+  if (process.env.CAPTURE_UI) await page.screenshot({ path: `tmp/${testInfo.project.name}-audio-preview.png`, fullPage: true });
 });
 
 test("confirmação muda de enviado para entregue e lido em tempo real", async ({ page }) => {
