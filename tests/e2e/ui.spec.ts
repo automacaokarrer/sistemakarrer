@@ -90,9 +90,11 @@ test("painel principal abre todos os módulos autorizados", async ({ page }, tes
   await page.getByRole("button", { name: /Maria Oliveira/ }).click();
   await expect(page.locator(".conversation-assignee")).toContainText("Ana Karrer atendendo");
   await expect(page.getByLabel("2 mensagens não lidas")).toHaveCount(0);
-  await page.getByLabel("Direcionar atendimento").selectOption("user-2");
+  await page.getByRole("button", { name: "Direcionar atendimento" }).click();
+  await page.getByRole("option", { name: "João Lima" }).click();
   await expect(page.locator(".conversation-assignee")).toContainText("João Lima atendendo");
-  await page.getByLabel("Status do atendimento").selectOption("waiting_customer");
+  await page.getByRole("button", { name: "Status do atendimento" }).click();
+  await page.getByRole("option", { name: "Aguardando cliente" }).click();
   await expect(page.locator(".conversation-service-status")).toContainText("Aguardando cliente");
   if (testInfo.project.name === "mobile") await page.getByRole("button", { name: "Voltar às conversas" }).click();
   await page.getByRole("button", { name: "Minhas" }).click();

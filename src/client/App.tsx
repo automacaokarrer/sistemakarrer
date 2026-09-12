@@ -1,5 +1,6 @@
 import {
   ArrowLeft,
+  Check,
   CheckCheck,
   ChevronDown,
   CircleUserRound,
@@ -619,8 +620,10 @@ function ConversationPanel({ conversation, attendants, canAssign, assigning, upd
         <button className="mobile-back" aria-label="Voltar às conversas" onClick={onBack}><ArrowLeft size={20} /></button>
         <Avatar name={conversation.name} imageUrl={conversation.avatarUrl} online={conversation.online} />
         <div className="chat-contact"><h2>{conversation.name}</h2><p>{conversation.online ? <em>Online</em> : conversation.lastSeenAt ? `Visto por último ${new Date(conversation.lastSeenAt).toLocaleString("pt-BR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" })}` : "Visto por último indisponível"} <ClassificationBadge value={conversation.classification} /></p></div>
-        <label className={`service-status-picker ${conversation.serviceStatus} ${canAssign ? "" : "solo"}`} title="Atualizar status do atendimento"><span>Status</span><select aria-label="Status do atendimento" value={conversation.serviceStatus} disabled={updatingStatus} onChange={(event) => void onStatus(event.target.value as ServiceStatus)}>{Object.entries(serviceStatusLabel).map(([value, label]) => <option value={value} key={value}>{label}</option>)}</select><ChevronDown size={14} /></label>
-        {canAssign && <label className="assignee-picker" title="Direcionar atendimento"><Users size={15} /><span>Atendente</span><select aria-label="Direcionar atendimento" value={conversation.assigneeId ?? ""} disabled={assigning} onChange={(event) => void onAssign(event.target.value)}><option value="">Não atribuído</option>{attendants.map((attendant) => <option value={attendant.id} key={attendant.id}>{attendant.name}</option>)}</select><ChevronDown size={14} /></label>}
+        <div className={`chat-routing-controls ${canAssign ? "" : "solo"}`}>
+          <CompactSelect className={`service-status-picker ${conversation.serviceStatus}`} label="Status do atendimento" value={conversation.serviceStatus} disabled={updatingStatus} options={Object.entries(serviceStatusLabel).map(([value, label]) => ({ value, label }))} onChange={(value) => void onStatus(value as ServiceStatus)} />
+          {canAssign && <CompactSelect className="assignee-picker" label="Direcionar atendimento" value={conversation.assigneeId ?? ""} disabled={assigning} icon={<Users size={15} />} options={[{ value: "", label: "Não atribuído" }, ...attendants.map((attendant) => ({ value: attendant.id, label: attendant.name }))]} onChange={(value) => void onAssign(value)} />}
+        </div>
         <button className="primary" onClick={onOpenLead}>Ver ficha do lead</button><button className="icon-button"><Menu size={19} /></button>
         {actionError && <div className="chat-action-error" role="alert">{actionError}</div>}
       </header>
@@ -960,6 +963,27 @@ function ConversationRow({ conversation, active, now, onClick }: { conversation:
 function Brand() { return <div className="brand"><img src="/karrer-logo.png" alt="Karrer & Advogados" /></div>; }
 function Avatar({ name, imageUrl, online, size = "md" }: { name: string | null; imageUrl?: string | null; online?: boolean; size?: "xs" | "sm" | "md" }) { const [failed, setFailed] = useState(false); useEffect(() => setFailed(false), [imageUrl]); return <div className={`avatar ${size}`}>{imageUrl && !failed ? <img src={imageUrl} alt={`Foto de ${name ?? "usuário"}`} loading="lazy" onError={() => setFailed(true)} /> : initials(name)}{online && <i />}</div>; }
 function ClassificationBadge({ value }: { value: Classification }) { return <span className={`badge ${value}`}>Lead {classificationLabel[value].toLowerCase()}</span>; }
+function CompactSelect({ className, label, value, options, disabled, icon, onChange }: { className: string; label: string; value: string; options: Array<{ value: string; label: string }>; disabled?: boolean; icon?: React.ReactNode; onChange: (value: string) => void }) {
+  const [open, setOpen] = useState(false);
+  const rootRef = useRef<HTMLDivElement>(null);
+  const selected = options.find((option) => option.value === value) ?? options[0];
+  useEffect(() => {
+    if (!open) return;
+    const closeOutside = (event: PointerEvent) => { if (!rootRef.current?.contains(event.target as Node)) setOpen(false); };
+    const closeOnEscape = (event: KeyboardEvent) => { if (event.key === "Escape") setOpen(false); };
+    document.addEventListener("pointerdown", closeOutside);
+    document.addEventListener("keydown", closeOnEscape);
+    return () => { document.removeEventListener("pointerdown", closeOutside); document.removeEventListener("keydown", closeOnEscape); };
+  }, [open]);
+  return <div ref={rootRef} className={`compact-select ${className} ${open ? "open" : ""}`}>
+    <button type="button" className="compact-select-trigger" aria-label={label} aria-haspopup="listbox" aria-expanded={open} disabled={disabled} onClick={() => setOpen((current) => !current)}>
+      {icon && <span className="compact-select-icon">{icon}</span>}
+      <span className="compact-select-copy"><small>{label === "Direcionar atendimento" ? "Atendente" : "Status"}</small><strong>{selected?.label ?? "Selecione"}</strong></span>
+      <ChevronDown className="compact-select-chevron" size={15} />
+    </button>
+    {open && <div className="compact-select-menu" role="listbox" aria-label={`${label} — opções`}>{options.map((option) => <button type="button" role="option" aria-selected={option.value === value} className={option.value === value ? "selected" : ""} key={option.value || "empty"} onClick={() => { onChange(option.value); setOpen(false); }}><span>{option.label}</span><Check size={15} /></button>)}</div>}
+  </div>;
+}
 function SearchBox({ value, onChange, placeholder }: { value: string; onChange: (value: string) => void; placeholder: string }) { return <label className="search-box"><Search size={16} /><input value={value} onChange={(event) => onChange(event.target.value)} placeholder={placeholder} /></label>; }
 function Chip({ active, onClick, children }: { active: boolean; onClick: () => void; children: React.ReactNode }) { return <button className={`chip ${active ? "active" : ""}`} onClick={onClick}>{children}</button>; }
 function Kpi({ label, value, detail, dark, tone }: { label: string; value: number; detail: string; dark?: boolean; tone?: Classification }) { return <div className={`kpi ${dark ? "dark" : ""} ${tone ?? ""}`}><span>{label}</span><strong>{value}</strong><small>{detail}</small></div>; }

@@ -48,7 +48,8 @@ input:focus, select:focus, textarea:focus { border-color: #9b805e !important; bo
 .conversation-list > header { padding: 28px 20px 16px; }
 .conversation-list > header h1 { font-size: 29px; }
 .conversation-list > .search-box { height: 42px; border-color: #ded7cd; box-shadow: 0 5px 16px rgb(39 33 27 / 4%); }
-.conversation-list > .chips { flex-wrap: wrap; padding-top: 14px; padding-bottom: 8px; }
+.conversation-list > .chips { display: grid; grid-template-columns: .78fr .85fr 1.45fr 1fr 1fr; gap: 4px; padding-top: 14px; padding-bottom: 8px; }
+.conversation-list > .chips .chip { min-width: 0; padding: 5px 2px; overflow: hidden; font-size: 8px; text-overflow: ellipsis; white-space: nowrap; }
 .conversation-sort { position: relative; display: flex; align-items: center; gap: 7px; margin: 0 18px 10px; color: #776f65; font-size: 10px; font-weight: 700; text-transform: uppercase; }
 .conversation-sort select { min-width: 0; flex: 1; height: 32px; padding: 0 28px 0 10px; appearance: none; border: 1px solid #d8d0c4; border-radius: 8px; background: #fff; color: #3d3934; font-size: 10px; font-weight: 600; }
 .conversation-sort svg { position: absolute; right: 9px; pointer-events: none; }
@@ -63,24 +64,35 @@ input:focus, select:focus, textarea:focus { border-color: #9b805e !important; bo
 .conversation-waiting { display: inline-flex; align-items: center; gap: 4px; width: fit-content; padding: 3px 8px; border: 1px solid #e2c78b; border-radius: 999px; background: #fff1ce; color: #825e20; font-size: 9px; font-style: normal; font-weight: 700; white-space: nowrap; }
 .conversation-row time b { background: #8b6c49; box-shadow: 0 3px 9px rgb(89 67 42 / 20%); }
 .chat-header { position: relative; }
-.service-status-picker, .assignee-picker { position: relative; display: flex; align-items: center; min-width: 150px; height: 40px; padding: 0 30px 0 11px; border: 1px solid rgb(70 63 54 / 28%); border-radius: 10px; background: rgb(255 255 255 / 58%); color: #4f473e; }
-.service-status-picker { margin-left: auto; border-left-width: 4px; }
-.service-status-picker.new { border-left-color: #b77b20; }
-.service-status-picker.in_progress { border-left-color: #4f8d5b; }
-.service-status-picker.waiting_customer { border-left-color: #58758e; }
-.service-status-picker.resolved { border-left-color: #777; }
-.service-status-picker > span, .assignee-picker > span { position: absolute; top: 4px; left: 11px; color: #82786c; font-size: 8px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; pointer-events: none; }
-.service-status-picker select, .assignee-picker select { width: 100%; height: 100%; padding: 10px 0 0; border: 0; outline: 0; appearance: none; background: transparent; color: #292622; font-size: 10px; font-weight: 700; cursor: pointer; }
-.service-status-picker > svg:last-child, .assignee-picker > svg:last-child { position: absolute; right: 9px; pointer-events: none; }
-.service-status-picker:focus-within, .assignee-picker:focus-within { border-color: #725b3f; box-shadow: 0 0 0 3px rgb(114 91 63 / 12%); }
-.assignee-picker { position: relative; display: flex; align-items: center; gap: 7px; min-width: 178px; height: 40px; margin-left: auto; padding: 0 30px 0 11px; border: 1px solid rgb(70 63 54 / 28%); border-radius: 10px; background: rgb(255 255 255 / 58%); color: #4f473e; }
-.assignee-picker > span { position: absolute; top: 4px; left: 34px; color: #82786c; font-size: 8px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; pointer-events: none; }
-.assignee-picker select { width: 100%; height: 100%; padding: 10px 0 0; border: 0; outline: 0; appearance: none; background: transparent; color: #292622; font-size: 11px; font-weight: 700; cursor: pointer; }
-.assignee-picker > svg:last-child { position: absolute; right: 9px; pointer-events: none; }
-.assignee-picker:focus-within { border-color: #725b3f; box-shadow: 0 0 0 3px rgb(114 91 63 / 12%); }
+.chat-routing-controls { display: contents; }
+.compact-select { position: relative; min-width: 150px; height: 42px; color: #4f473e; }
+.service-status-picker { margin-left: auto; }
+.compact-select-trigger { width: 100%; height: 100%; display: flex; align-items: center; gap: 8px; padding: 5px 31px 5px 11px; overflow: hidden; border: 1px solid rgb(70 63 54 / 28%); border-radius: 11px; background: rgb(255 255 255 / 78%); color: #292622; box-shadow: 0 4px 12px rgb(57 45 32 / 8%); text-align: left; }
+.service-status-picker .compact-select-trigger { border-left-width: 4px; }
+.service-status-picker.new .compact-select-trigger { border-left-color: #b77b20; }
+.service-status-picker.in_progress .compact-select-trigger { border-left-color: #4f8d5b; }
+.service-status-picker.waiting_customer .compact-select-trigger { border-left-color: #58758e; }
+.service-status-picker.resolved .compact-select-trigger { border-left-color: #777; }
+.compact-select-trigger:hover { background: #fff; border-color: rgb(70 63 54 / 42%); }
+.compact-select-trigger:focus-visible, .compact-select.open .compact-select-trigger { outline: 0; border-color: #725b3f; box-shadow: 0 0 0 3px rgb(114 91 63 / 14%), 0 8px 20px rgb(57 45 32 / 10%); }
+.compact-select-trigger:disabled { opacity: .6; cursor: wait; }
+.compact-select-icon { display: grid; flex: 0 0 auto; color: #746653; }
+.compact-select-copy { display: grid; min-width: 0; line-height: 1.05; }
+.compact-select-copy small { color: #82786c; font-size: 7px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }
+.compact-select-copy strong { margin-top: 3px; overflow: hidden; font-size: 10px; font-weight: 700; text-overflow: ellipsis; white-space: nowrap; }
+.compact-select-chevron { position: absolute; right: 10px; transition: transform .18s ease; pointer-events: none; }
+.compact-select.open .compact-select-chevron { transform: rotate(180deg); }
+.compact-select-menu { position: absolute; z-index: 40; top: calc(100% + 7px); left: 0; width: max-content; min-width: 100%; max-width: min(310px, calc(100vw - 24px)); padding: 6px; overflow: hidden; border: 1px solid #d8cfc2; border-radius: 13px; background: #fff; box-shadow: 0 18px 45px rgb(38 30 23 / 24%); }
+.assignee-picker .compact-select-menu { right: 0; left: auto; min-width: 260px; }
+.compact-select-menu button { width: 100%; min-height: 40px; display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 9px 11px; border: 0; border-radius: 8px; background: transparent; color: #3b352f; font-size: 11px; line-height: 1.35; text-align: left; }
+.compact-select-menu button:hover, .compact-select-menu button:focus-visible { outline: 0; background: #f4efe8; }
+.compact-select-menu button.selected { background: #ede5da; color: #5d472e; font-weight: 700; }
+.compact-select-menu button svg { flex: 0 0 auto; opacity: 0; color: #745b3e; }
+.compact-select-menu button.selected svg { opacity: 1; }
+.assignee-picker { min-width: 178px; margin-left: auto; }
 .service-status-picker + .assignee-picker { margin-left: 0; }
 .chat-action-error { position: absolute; z-index: 2; right: 24px; bottom: -34px; max-width: min(420px, calc(100% - 48px)); padding: 8px 12px; border-radius: 8px; background: #8c3b2e; color: #fff; box-shadow: 0 8px 24px rgb(50 20 15 / 25%); font-size: 11px; }
-.assignee-picker + .primary { margin-left: 0; }
+.chat-routing-controls + .primary { margin-left: 0; }
 .conversation-empty { display: grid; justify-items: center; gap: 6px; margin: 34px 18px; padding: 28px 18px; border: 1px dashed #d8cfc2; border-radius: 15px; color: #756c61; text-align: center; }
 .conversation-empty > span { display: grid; place-items: center; width: 42px; height: 42px; margin-bottom: 5px; border-radius: 13px; background: #ebe4da; color: #776247; }
 .conversation-empty strong { color: #3b3631; font: 500 18px "Montserrat", sans-serif; }
@@ -249,7 +261,7 @@ input:focus, select:focus, textarea:focus { border-color: #9b805e !important; bo
   .settings-nav strong { display: none; }
 }
 
-@media (min-width: 768px) and (max-width: 1200px) {
+@media (min-width: 768px) and (max-width: 1400px) {
   .chat-header { gap: 8px; padding-inline: 16px; }
   .chat-header .icon-button { display: none; }
   .chat-header .service-status-picker { min-width: 126px; }
@@ -266,13 +278,14 @@ input:focus, select:focus, textarea:focus { border-color: #9b805e !important; bo
   .chat-header .chat-contact h2, .chat-header .chat-contact p { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .chat-header .chat-contact .badge { display: none; }
   .chat-header .primary { grid-column: 4; grid-row: 1; margin: 0; }
-  .chat-header .service-status-picker { grid-column: 1 / 3; grid-row: 2; width: 100%; min-width: 0; max-width: none; height: 38px; margin: 0; padding: 0 23px 0 8px; }
-  .chat-header .service-status-picker.solo { grid-column: 1 / 5; }
-  .chat-header .service-status-picker > span { display: none; }
-  .chat-header .service-status-picker select { padding-top: 0; font-size: 9px; }
-  .chat-header .assignee-picker { grid-column: 3 / 5; grid-row: 2; width: 100%; min-width: 0; max-width: none; height: 38px; margin: 0; padding-left: 9px; }
-  .chat-header .assignee-picker > svg:first-child, .chat-header .assignee-picker > span { display: none; }
-  .chat-header .assignee-picker select { padding-top: 0; font-size: 9px; }
+  .chat-header .chat-routing-controls { grid-column: 1 / 5; grid-row: 2; display: grid; grid-template-columns: minmax(122px, .42fr) minmax(0, .58fr); gap: 8px; min-width: 0; }
+  .chat-header .chat-routing-controls.solo { grid-template-columns: 1fr; }
+  .chat-header .service-status-picker, .chat-header .assignee-picker { width: 100%; min-width: 0; max-width: none; height: 38px; margin: 0; }
+  .chat-header .compact-select-trigger { padding: 4px 26px 4px 8px; }
+  .chat-header .compact-select-copy small, .chat-header .compact-select-icon { display: none; }
+  .chat-header .compact-select-copy strong { margin: 0; font-size: 9px; }
+  .chat-header .compact-select-menu { min-width: 210px; }
+  .chat-header .assignee-picker .compact-select-menu { min-width: min(280px, calc(100vw - 24px)); }
   .chat-header .icon-button { display: none; }
   .chat-action-error { right: 12px; bottom: -32px; max-width: calc(100% - 24px); }
   .app-shell { padding-bottom: 178px; }
