@@ -55,6 +55,7 @@ export interface ZApiPayload {
   video?: { videoUrl?: string; caption?: string; mimeType?: string };
   document?: { documentUrl?: string; fileName?: string; mimeType?: string; pageCount?: number };
   status?: string;
+  lastSeen?: number | null;
   ids?: string[];
   error?: string;
 }

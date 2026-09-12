@@ -19,7 +19,7 @@ async function mockDashboard(
   const conversations = [{
     id: "conversation-1", contactId: "contact-1", createdAt: now, name: "Maria Oliveira", phone: "5592999999999",
     bank: "Banco Exemplo", stage: "Documentação", classification: "hot", score: 86, lastMessage: "Enviei os documentos",
-    lastMessageType: "text", lastMessageAt: now, unreadCount: 2, online: true, lastSeenAt: now, assigneeName: "Ana Karrer",
+    lastMessageType: "text", lastMessageAt: now, unreadCount: 2, online: false, lastSeenAt: now, assigneeName: "Ana Karrer",
   }];
   const contacts = [{
     id: "contact-1", phone: "5592999999999", name: "Maria Oliveira", cpf: null, rg: null, rgIssuer: null,
@@ -68,6 +68,7 @@ test("painel principal abre todos os módulos autorizados", async ({ page }, tes
 
   await page.getByRole("button", { name: "Leads" }).click();
   await expect(page.getByRole("heading", { name: "Leads", exact: true })).toBeVisible();
+  await expect(page.getByText("(92) 99999-9999")).toBeVisible();
   await page.getByRole("button", { name: "Filtrar por hora de entrada" }).click();
   await expect(page.getByRole("dialog", { name: "Hora de entrada" })).toBeVisible();
   await page.getByRole("button", { name: /Todos os horários/ }).click();
@@ -84,6 +85,11 @@ test("painel principal abre todos os módulos autorizados", async ({ page }, tes
   await page.getByRole("button", { name: "Configurações" }).click();
   await expect(page.getByRole("heading", { name: "Configurações" })).toBeVisible();
   await expect(page.getByText("Equipe online")).toBeVisible();
+  await page.getByRole("button", { name: "Ver informações de João Lima" }).click();
+  await expect(page.getByRole("dialog", { name: "Informações do usuário" })).toBeVisible();
+  await expect(page.getByRole("dialog", { name: "Informações do usuário" }).getByText("@joaolima", { exact: true })).toBeVisible();
+  await expect(page.getByText("As permissões só podem ser alteradas por você, administrador mestre.")).toBeVisible();
+  await page.getByRole("button", { name: "Fechar" }).click();
   await expectNoHorizontalOverflow(page);
 });
 
@@ -144,7 +150,54 @@ test("ícone de imagem envia arquivo pelo compositor", async ({ page }) => {
   await page.getByRole("button", { name: "Enviar imagem" }).click();
   const chooser = await chooserPromise;
   await chooser.setFiles({ name: "foto.png", mimeType: "image/png", buffer: Buffer.from("imagem") });
+  await expect(page.getByRole("region", { name: "Prévia do arquivo" })).toBeVisible();
+  await expect(page.getByAltText("Prévia da imagem")).toBeVisible();
+  await page.getByLabel("Mensagem").fill("Posso continuar escrevendo durante a prévia");
+  await expect(page.getByLabel("Mensagem")).toBeEditable();
+  await page.getByRole("button", { name: "Enviar arquivo" }).click();
   await expect(page.locator('img[alt="Imagem de teste"]')).toBeVisible();
   await expect(page.getByRole("button", { name: "Anexar documento" })).toBeEnabled();
   await expect(page.getByRole("button", { name: "Gravar áudio" })).toBeEnabled();
+});
+
+test("áudio pode ser ouvido antes do envio sem bloquear a escrita", async ({ page }) => {
+  await page.addInitScript(() => {
+    const track = { stop: () => undefined };
+    Object.defineProperty(navigator, "mediaDevices", { configurable: true, value: { getUserMedia: async () => ({ getTracks: () => [track] }) } });
+    class MockMediaRecorder {
+      static isTypeSupported() { return true; }
+      state = "inactive";
+      mimeType = "audio/webm";
+      ondataavailable: ((event: { data: Blob }) => void) | null = null;
+      onstop: (() => void) | null = null;
+      start() { this.state = "recording"; }
+      stop() { this.state = "inactive"; this.ondataavailable?.({ data: new Blob(["audio"], { type: this.mimeType }) }); this.onstop?.(); }
+    }
+    Object.defineProperty(window, "MediaRecorder", { configurable: true, value: MockMediaRecorder });
+  });
+  await mockDashboard(page);
+  await page.goto("/");
+  await page.getByRole("button", { name: "Gravar áudio" }).click();
+  await expect(page.getByRole("button", { name: "Parar gravação" })).toBeVisible();
+  await page.getByLabel("Mensagem").fill("Texto continua liberado");
+  await expect(page.getByLabel("Mensagem")).toBeEditable();
+  await page.getByRole("button", { name: "Parar gravação" }).click();
+  await expect(page.getByText("Ouça antes de enviar")).toBeVisible();
+  await expect(page.locator(".attachment-preview audio")).toBeVisible();
+});
+
+test("confirmação muda de enviado para entregue e lido em tempo real", async ({ page }) => {
+  let conversationSocket: WebSocketRoute | null = null;
+  await page.routeWebSocket(/\/api\/conversations\/ws$/, () => undefined);
+  await page.routeWebSocket(/\/api\/conversations\/conversation-1\/ws$/, (socket) => { conversationSocket = socket; });
+  const message = { id: "outbound-1", conversationId: "conversation-1", direction: "outbound", type: "text", body: "Mensagem acompanhada", fileName: null, mediaKey: null, duration: null, status: "sent", createdAt: now };
+  await mockDashboard(page, () => [], () => ({ messages: [message], hasMore: false, nextCursor: null }));
+  await page.goto("/");
+  await expect(page.locator(".message-status")).toContainText("Enviado");
+  await expect(page.getByText(/Visto por último/)).toBeVisible();
+  await expect.poll(() => Boolean(conversationSocket)).toBe(true);
+  conversationSocket!.send(JSON.stringify({ type: "message.status", messageId: "outbound-1", status: "delivered" }));
+  await expect(page.locator(".message-status")).toContainText("Entregue");
+  conversationSocket!.send(JSON.stringify({ type: "message.status", messageId: "outbound-1", status: "read" }));
+  await expect(page.locator(".message-status")).toContainText("Lido");
 });

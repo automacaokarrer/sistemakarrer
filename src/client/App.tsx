@@ -35,6 +35,16 @@ const resetToken = new URLSearchParams(location.search).get("reset");
 const activationEmail = new URLSearchParams(location.search).get("activate");
 const activationRequiresPassword = new URLSearchParams(location.search).get("invite") === "1";
 
+function formatBrazilianPhone(value: string): string {
+  const digits = value.replace(/\D/g, "");
+  const national = digits.startsWith("55") && (digits.length === 12 || digits.length === 13) ? digits.slice(2) : digits;
+  if (national.length !== 10 && national.length !== 11) return value;
+  const areaCode = national.slice(0, 2);
+  let local = national.slice(2);
+  if (local.length === 8) local = `9${local}`;
+  return `(${areaCode}) ${local.slice(0, 5)}-${local.slice(5)}`;
+}
+
 function App() {
   const [auth, setAuth] = useState<AuthStatus | null>(null);
   const [authError, setAuthError] = useState("");
@@ -354,7 +364,9 @@ function ConversationPanel({ conversation, onBack, onOpenLead, onRefresh }: { co
   const [nextCursor, setNextCursor] = useState<string | null>(null);
   const [hasMore, setHasMore] = useState(false);
   const [sending, setSending] = useState(false);
+  const [uploadingMedia, setUploadingMedia] = useState(false);
   const [recording, setRecording] = useState(false);
+  const [pendingAttachment, setPendingAttachment] = useState<{ file: File; kind: "image" | "audio" | "document"; previewUrl: string | null; duration?: number } | null>(null);
   const [sendError, setSendError] = useState("");
   const endRef = useRef<HTMLDivElement>(null);
   const messagesRef = useRef<HTMLDivElement>(null);
@@ -439,12 +451,15 @@ function ConversationPanel({ conversation, onBack, onOpenLead, onRefresh }: { co
       };
       socket.onmessage = (event) => {
         try {
-          const data = JSON.parse(event.data) as { type: string; message?: Message };
+          const data = JSON.parse(event.data) as { type: string; message?: Message; messageId?: string; status?: Message["status"] };
           if (data.type === "message.new" && data.message) {
             const pane = messagesRef.current;
             const shouldFollow = !pane || pane.scrollHeight - pane.scrollTop - pane.clientHeight < 120;
             setMessages((current) => current.some((item) => item.id === data.message?.id) ? current : [...current, data.message!]);
             if (shouldFollow) requestAnimationFrame(() => endRef.current?.scrollIntoView({ behavior: "smooth" }));
+          }
+          if (data.type === "message.status" && data.messageId && data.status) {
+            setMessages((current) => current.map((message) => message.id === data.messageId ? { ...message, status: data.status! } : message));
           }
         } catch { /* mensagens de controle são ignoradas */ }
       };
@@ -484,8 +499,8 @@ function ConversationPanel({ conversation, onBack, onOpenLead, onRefresh }: { co
   }
 
   async function sendAttachment(file: File, kind: "image" | "audio" | "document", duration?: number) {
-    if (sending) return;
-    setSending(true);
+    if (uploadingMedia) return;
+    setUploadingMedia(true);
     setSendError("");
     const form = new FormData();
     form.set("file", file); form.set("kind", kind);
@@ -495,11 +510,17 @@ function ConversationPanel({ conversation, onBack, onOpenLead, onRefresh }: { co
       const result = await api<{ message: Message }>(`/api/conversations/${conversation.id}/media`, { method: "POST", body: form });
       setMessages((current) => current.some((item) => item.id === result.message.id) ? current : [...current, result.message]);
       if (kind !== "audio") setText("");
+      setPendingAttachment(null);
       await onRefresh();
       requestAnimationFrame(() => endRef.current?.scrollIntoView({ behavior: "smooth" }));
     } catch (reason) {
       setSendError(reason instanceof Error ? reason.message : "Não foi possível enviar o arquivo.");
-    } finally { setSending(false); }
+    } finally { setUploadingMedia(false); }
+  }
+
+  function stageAttachment(file: File, kind: "image" | "audio" | "document", duration?: number) {
+    setPendingAttachment({ file, kind, duration, previewUrl: kind === "image" || kind === "audio" ? URL.createObjectURL(file) : null });
+    setSendError("");
   }
 
   async function toggleRecording() {
@@ -517,19 +538,23 @@ function ConversationPanel({ conversation, onBack, onOpenLead, onRefresh }: { co
         recorderStreamRef.current?.getTracks().forEach((track) => track.stop());
         recorderStreamRef.current = null; recorderRef.current = null; setRecording(false);
         const blob = new Blob(chunks, { type: mime });
-        if (blob.size) void sendAttachment(new File([blob], `audio-${Date.now()}.${mime.includes("mp4") ? "m4a" : "webm"}`, { type: mime }), "audio", duration);
+        if (blob.size) stageAttachment(new File([blob], `audio-${Date.now()}.${mime.includes("mp4") ? "m4a" : "webm"}`, { type: mime }), "audio", duration);
       };
       recorderRef.current = recorder; recorderStreamRef.current = stream; recordingStartedAtRef.current = Date.now();
       recorder.start(); setRecording(true);
     } catch { setSendError("Permita o acesso ao microfone para gravar o áudio."); }
   }
 
+  useEffect(() => () => {
+    if (pendingAttachment?.previewUrl) URL.revokeObjectURL(pendingAttachment.previewUrl);
+  }, [pendingAttachment]);
+
   return (
     <div className="conversation-panel">
       <header className="chat-header">
         <button className="mobile-back" aria-label="Voltar às conversas" onClick={onBack}><ArrowLeft size={20} /></button>
         <Avatar name={conversation.name} online={conversation.online} />
-        <div><h2>{conversation.name}</h2><p>{conversation.online ? <em>Online</em> : `Visto por último ${formatTime(conversation.lastSeenAt)}`} <ClassificationBadge value={conversation.classification} /></p></div>
+        <div><h2>{conversation.name}</h2><p>{conversation.online ? <em>Online</em> : conversation.lastSeenAt ? `Visto por último ${new Date(conversation.lastSeenAt).toLocaleString("pt-BR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" })}` : "Visto por último indisponível"} <ClassificationBadge value={conversation.classification} /></p></div>
         <button className="primary" onClick={onOpenLead}>Ver ficha do lead</button><button className="icon-button"><Menu size={19} /></button>
       </header>
       <div ref={messagesRef} className="messages" onScroll={(event) => { if (event.currentTarget.scrollTop < 120) void loadOlderMessages(); }}>
@@ -541,12 +566,20 @@ function ConversationPanel({ conversation, onBack, onOpenLead, onRefresh }: { co
         {!loading && messages.length === 0 && <Empty text="Ainda não há mensagens nesta conversa." dark />}
         <div ref={endRef} />
       </div>
+      {pendingAttachment && <div className="attachment-preview" role="region" aria-label="Prévia do arquivo">
+        {pendingAttachment.kind === "image" && pendingAttachment.previewUrl && <img src={pendingAttachment.previewUrl} alt="Prévia da imagem" />}
+        {pendingAttachment.kind === "audio" && pendingAttachment.previewUrl && <audio controls src={pendingAttachment.previewUrl} />}
+        {pendingAttachment.kind === "document" && <FileText size={30} />}
+        <span><strong>{pendingAttachment.file.name}</strong><small>{pendingAttachment.kind === "audio" ? "Ouça antes de enviar" : pendingAttachment.kind === "image" ? "Confira a imagem antes de enviar" : "Documento selecionado"}</small></span>
+        <button type="button" className="outline" disabled={uploadingMedia} onClick={() => setPendingAttachment(null)}><X size={16} /> Cancelar</button>
+        <button type="button" className="primary" disabled={uploadingMedia} onClick={() => void sendAttachment(pendingAttachment.file, pendingAttachment.kind, pendingAttachment.duration)}>{uploadingMedia ? <LoaderCircle className="spin" size={16} /> : <Send size={16} />} {uploadingMedia ? "Enviando..." : "Enviar arquivo"}</button>
+      </div>}
       <form className="composer" onSubmit={sendMessage}>
-        <input ref={documentInputRef} className="composer-file-input" type="file" accept=".pdf,.doc,.docx,.xls,.xlsx,.csv,.txt" onChange={(event) => { const file = event.target.files?.[0]; if (file) void sendAttachment(file, "document"); event.currentTarget.value = ""; }} />
-        <input ref={imageInputRef} className="composer-file-input" type="file" accept="image/jpeg,image/png,image/webp" onChange={(event) => { const file = event.target.files?.[0]; if (file) void sendAttachment(file, "image"); event.currentTarget.value = ""; }} />
-        <button type="button" title="Anexar documento" aria-label="Anexar documento" disabled={sending} onClick={() => documentInputRef.current?.click()}><Paperclip size={20} /></button><button type="button" title="Enviar imagem" aria-label="Enviar imagem" disabled={sending} onClick={() => imageInputRef.current?.click()}><Image size={19} /></button>
+        <input ref={documentInputRef} className="composer-file-input" type="file" accept=".pdf,.doc,.docx,.xls,.xlsx,.csv,.txt" onChange={(event) => { const file = event.target.files?.[0]; if (file) stageAttachment(file, "document"); event.currentTarget.value = ""; }} />
+        <input ref={imageInputRef} className="composer-file-input" type="file" accept="image/jpeg,image/png,image/webp" onChange={(event) => { const file = event.target.files?.[0]; if (file) stageAttachment(file, "image"); event.currentTarget.value = ""; }} />
+        <button type="button" title="Anexar documento" aria-label="Anexar documento" disabled={uploadingMedia} onClick={() => documentInputRef.current?.click()}><Paperclip size={20} /></button><button type="button" title="Enviar imagem" aria-label="Enviar imagem" disabled={uploadingMedia} onClick={() => imageInputRef.current?.click()}><Image size={19} /></button>
         <textarea aria-label="Mensagem" value={text} onChange={(event) => setText(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); event.currentTarget.form?.requestSubmit(); } }} placeholder="Escreva uma mensagem" rows={1} />
-        <button type={text.trim() ? "submit" : "button"} className={`send-button ${recording ? "recording" : ""}`} disabled={sending} onClick={text.trim() ? undefined : () => void toggleRecording()} aria-label={text.trim() ? "Enviar" : recording ? "Parar gravação" : "Gravar áudio"}>{text.trim() ? <Send size={19} /> : <Mic size={19} />}</button>
+        <button type={text.trim() && !recording ? "submit" : "button"} className={`send-button ${recording ? "recording" : ""}`} disabled={sending} onClick={text.trim() && !recording ? undefined : (event) => { event.preventDefault(); void toggleRecording(); }} aria-label={recording ? "Parar gravação" : text.trim() ? "Enviar" : "Gravar áudio"}>{recording ? <Mic size={19} /> : text.trim() ? <Send size={19} /> : <Mic size={19} />}</button>
       </form>
     </div>
   );
@@ -561,7 +594,7 @@ function MessageBubble({ message }: { message: Message }) {
         {message.type === "audio" && (mediaUrl ? <audio className="message-audio" controls preload="metadata" src={mediaUrl} /> : <div className="audio-player"><Mic size={18} /><span /><small>{message.duration ? `${message.duration}s` : "Áudio"}</small></div>)}
         {message.type === "document" && <a className="document-message" href={mediaUrl ?? undefined} target="_blank" rel="noreferrer"><FileText /><span><strong>{message.fileName ?? message.body ?? "Documento"}</strong><small>Abrir documento</small></span></a>}
         {message.body && message.type === "text" && <p>{message.body}</p>}
-        <footer>{formatTime(message.createdAt)} {message.direction === "outbound" && <><span>· {message.status === "read" ? "Lido" : message.status === "failed" ? "Não enviado" : "Enviado"}</span><CheckCheck size={12} /></>}</footer>
+        <footer>{formatTime(message.createdAt)} {message.direction === "outbound" && <span className={`message-status ${message.status}`}>· {message.status === "read" ? "Lido" : message.status === "delivered" ? "Entregue" : message.status === "failed" ? "Não enviado" : message.status === "sending" ? "Enviando" : "Enviado"} <CheckCheck size={12} /></span>}</footer>
       </div>
     </div>
   );
@@ -605,7 +638,7 @@ function LeadsPage({ conversations, summary, onOpen, onRefresh }: { conversation
     const cell = (value: unknown) => `"${String(value ?? "").replace(/"/g, '""')}"`;
     const rows = [
       ["Nome", "Telefone", "Classificação", "Etapa", "Último contato", "Responsável"],
-      ...leads.map((lead) => [lead.name, lead.phone, classificationLabel[lead.classification], lead.stage, lead.lastMessageAt ? new Date(lead.lastMessageAt).toLocaleString("pt-BR") : "", lead.assigneeName ?? "Não atribuído"]),
+      ...leads.map((lead) => [lead.name, formatBrazilianPhone(lead.phone), classificationLabel[lead.classification], lead.stage, lead.lastMessageAt ? new Date(lead.lastMessageAt).toLocaleString("pt-BR") : "", lead.assigneeName ?? "Não atribuído"]),
     ];
     const blob = new Blob(["\ufeff", rows.map((row) => row.map(cell).join(";")).join("\r\n")], { type: "text/csv;charset=utf-8" });
     const url = URL.createObjectURL(blob);
@@ -644,7 +677,7 @@ function LeadsPage({ conversations, summary, onOpen, onRefresh }: { conversation
       <div className="leads-table">
         <div className="table-toolbar"><div className="chips"><Chip active={filter === "all"} onClick={() => setFilter("all")}>Todos</Chip>{(["hot", "warm", "cold"] as Classification[]).map((value) => <Chip key={value} active={filter === value} onClick={() => setFilter(value)}>{classificationLabel[value]}s</Chip>)}</div><SearchBox value={search} onChange={setSearch} placeholder="Buscar lead" /></div>
         <div className="lead-row lead-head"><span>Nome</span><span>Telefone</span><span>Classificação</span><span>Etapa</span><span>Último contato</span><span>Responsável</span><span /></div>
-        {leads.map((lead) => <div className="lead-row" key={lead.id} onDoubleClick={() => onOpen(lead.id)}><span className="person"><Avatar name={lead.name} size="xs" /><strong>{lead.name}</strong></span><span data-label="Telefone">{lead.phone}</span><span data-label="Classificação"><select aria-label={`Classificação de ${lead.name}`} className={`classification-select ${lead.classification}`} value={lead.classification} onChange={(event) => void updateClassification(lead.id, event.target.value as Classification)}><option value="hot">Quente</option><option value="warm">Morno</option><option value="cold">Frio</option></select></span><span data-label="Etapa">{lead.stage}</span><span data-label="Último contato">{formatTime(lead.lastMessageAt)}</span><span data-label="Responsável">{lead.assigneeName ?? "Não atribuído"}</span><button aria-label={`Abrir ficha de ${lead.name}`} onClick={() => onOpen(lead.id)}>Abrir ficha <span>→</span></button></div>)}
+        {leads.map((lead) => <div className="lead-row" key={lead.id} onDoubleClick={() => onOpen(lead.id)}><span className="person"><Avatar name={lead.name} size="xs" /><strong>{lead.name}</strong></span><span data-label="Telefone">{formatBrazilianPhone(lead.phone)}</span><span data-label="Classificação"><select aria-label={`Classificação de ${lead.name}`} className={`classification-select ${lead.classification}`} value={lead.classification} onChange={(event) => void updateClassification(lead.id, event.target.value as Classification)}><option value="hot">Quente</option><option value="warm">Morno</option><option value="cold">Frio</option></select></span><span data-label="Etapa">{lead.stage}</span><span data-label="Último contato">{formatTime(lead.lastMessageAt)}</span><span data-label="Responsável">{lead.assigneeName ?? "Não atribuído"}</span><button aria-label={`Abrir ficha de ${lead.name}`} onClick={() => onOpen(lead.id)}>Abrir ficha <span>→</span></button></div>)}
         {leads.length === 0 && <Empty text={search || filter !== "all" || attendant !== "all" || entryTime !== "all" ? "Nenhum lead corresponde aos filtros." : "Nenhum lead neste período."} />}
       </div>
       {entryTimeModal && <Modal title="Hora de entrada" subtitle="Filtre os leads pelo horário em que chegaram ao atendimento." onClose={() => setEntryTimeModal(false)}><div className="attendant-picker">{([
@@ -667,9 +700,9 @@ function LeadDetail({ conversation, onBack, onChat, onRefresh }: { conversation:
   async function saveNote() { if (!note.trim()) return; await api(`/api/conversations/${current.id}/notes`, { method: "POST", body: JSON.stringify({ body: note.trim() }) }); setNote(""); }
   return (
     <section className="page detail-page">
-      <header className="lead-hero"><button onClick={onBack}><ArrowLeft size={17} /> Leads</button><Avatar name={conversation.name} /><div><h1>{conversation.name}</h1><p>{conversation.phone} · <em>{conversation.online ? "Online" : "Offline"}</em> · Origem: WhatsApp</p></div><button className="primary" onClick={onChat}>Abrir chat</button><button className="outline">Editar cadastro</button></header>
+      <header className="lead-hero"><button onClick={onBack}><ArrowLeft size={17} /> Leads</button><Avatar name={conversation.name} /><div><h1>{conversation.name}</h1><p>{formatBrazilianPhone(conversation.phone)} · <em>{conversation.online ? "Online" : "Offline"}</em> · Origem: WhatsApp</p></div><button className="primary" onClick={onChat}>Abrir chat</button><button className="outline">Editar cadastro</button></header>
       <div className="detail-grid"><div className="card history-card"><div className="tabs"><button className="active">Histórico da conversa</button><button>Mídias e documentos</button><button>Anotações</button><button>Linha do tempo</button></div><div className="history-list">{messages.map((message) => <div key={message.id}><time>{new Date(message.createdAt).toLocaleString("pt-BR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" })}</time><p><strong>{message.direction === "inbound" ? conversation.name.split(" ")[0] : "Karrer"}</strong> — {message.type === "text" ? message.body : `${message.type === "audio" ? "Áudio" : message.type === "image" ? "Imagem" : "Documento"}${message.body ? ` · ${message.body}` : ""}`}</p></div>)}</div><footer>Histórico somente leitura · para responder, abra o chat.</footer></div>
-        <aside className="detail-aside"><div className="classification-card"><span className="eyebrow">Classificação</span><div className="segmented">{(["hot", "warm", "cold"] as Classification[]).map((value) => <button key={value} className={conversation.classification === value ? value : ""} onClick={() => void classify(value)}>{classificationLabel[value]}</button>)}</div><p><span>Pontuação</span><strong>{conversation.score} / 100</strong></p><progress max="100" value={conversation.score} /><ul><li>Respondeu em menos de 5 min</li><li>Enviou documentação</li><li>Interações recentes</li><li className="pending">Contrato de honorários pendente</li></ul></div><div className="card data-card"><span className="eyebrow">Dados do cliente</span><dl><dt>Telefone</dt><dd>{conversation.phone}</dd><dt>Banco</dt><dd>{conversation.bank ?? "Não informado"}</dd><dt>Etapa</dt><dd><strong>{conversation.stage}</strong></dd><dt>Responsável</dt><dd>{conversation.assigneeName ?? "Não atribuído"}</dd></dl></div><div className="card notes-card"><span className="eyebrow">Anotações internas</span><textarea value={note} onChange={(event) => setNote(event.target.value)} placeholder="Adicionar nota..." /><button className="primary" onClick={() => void saveNote()}>Salvar nota</button></div></aside></div>
+        <aside className="detail-aside"><div className="classification-card"><span className="eyebrow">Classificação</span><div className="segmented">{(["hot", "warm", "cold"] as Classification[]).map((value) => <button key={value} className={conversation.classification === value ? value : ""} onClick={() => void classify(value)}>{classificationLabel[value]}</button>)}</div><p><span>Pontuação</span><strong>{conversation.score} / 100</strong></p><progress max="100" value={conversation.score} /><ul><li>Respondeu em menos de 5 min</li><li>Enviou documentação</li><li>Interações recentes</li><li className="pending">Contrato de honorários pendente</li></ul></div><div className="card data-card"><span className="eyebrow">Dados do cliente</span><dl><dt>Telefone</dt><dd>{formatBrazilianPhone(conversation.phone)}</dd><dt>Banco</dt><dd>{conversation.bank ?? "Não informado"}</dd><dt>Etapa</dt><dd><strong>{conversation.stage}</strong></dd><dt>Responsável</dt><dd>{conversation.assigneeName ?? "Não atribuído"}</dd></dl></div><div className="card notes-card"><span className="eyebrow">Anotações internas</span><textarea value={note} onChange={(event) => setNote(event.target.value)} placeholder="Adicionar nota..." /><button className="primary" onClick={() => void saveNote()}>Salvar nota</button></div></aside></div>
     </section>
   );
 }
@@ -719,7 +752,7 @@ function ClientsPage({ contacts, googleDrive, onRefresh }: { contacts: Contact[]
   );
 }
 
-type SettingsModal = { kind: "password" | "delete" | "email"; user?: ManagedUser } | null;
+type SettingsModal = { kind: "password" | "delete" | "email" | "profile"; user?: ManagedUser } | null;
 const accessLabels: Array<{ key: keyof Permissions; label: string }> = [
   { key: "chat", label: "Chat" }, { key: "leads", label: "Leads" }, { key: "clients", label: "Clientes" },
 ];
@@ -787,16 +820,17 @@ function SettingsPage({ currentUser }: { currentUser: User }) {
       <div className="card security-card"><Avatar name={currentUser.name} imageUrl={currentUser.avatarUrl} /><div><span className="eyebrow">Minha conta</span><h2>{currentUser.name}</h2><p>{currentUser.email} · Administrador mestre</p></div><button className="outline" onClick={() => open({ kind: "password" })}><KeyRound size={16} /> Alterar minha senha</button></div>
       <div className="card access-summary"><span className="eyebrow">Equipe</span><strong>{users.filter((user) => user.active).length}</strong><p>usuários ativos</p><small>{users.length} contas cadastradas</small></div>
     </div>
-    <div className="card online-team"><header><div><span className="eyebrow">Presença agora</span><h2>Equipe online</h2></div><strong>{users.filter((user) => user.online).length}</strong></header><div className="online-team-list">{users.filter((user) => user.online).map((user) => <div key={user.id}><Avatar name={user.name} imageUrl={user.avatarUrl} size="sm" online /><span><strong>{user.name}</strong><small>{user.professionalRole ?? "Equipe Karrer"}{user.instagram ? ` · ${user.instagram}` : ""}</small></span></div>)}{!users.some((user) => user.online) && <p>Nenhum usuário online neste momento.</p>}</div></div>
-    <div className="card users-card"><div className="users-card-head"><div><h2>Usuários e permissões</h2><p>Os toggles são aplicados imediatamente no banco e validados pela API.</p></div></div>
+    <div className="card online-team"><header><div><span className="eyebrow">Presença agora</span><h2>Equipe online</h2></div><strong>{users.filter((user) => user.online).length}</strong></header><div className="online-team-list">{users.filter((user) => user.online).map((user) => <button type="button" key={user.id} onClick={() => open({ kind: "profile", user })}><Avatar name={user.name} imageUrl={user.avatarUrl} size="sm" online /><span><strong>{user.name}</strong><small>{user.professionalRole ?? "Equipe Karrer"}{user.instagram ? ` · ${user.instagram}` : ""}</small></span></button>)}{!users.some((user) => user.online) && <p>Nenhum usuário online neste momento.</p>}</div></div>
+    <div className="card users-card"><div className="users-card-head"><div><h2>Usuários e permissões</h2><p>Somente você, como administrador mestre, pode alterar funções e acessos. As mudanças são validadas pela API.</p></div></div>
       <div className="users-table users-table-head"><span>Usuário</span><span>Status</span>{accessLabels.map(({ key, label }) => <span key={key}>{label}</span>)}<span>Ações</span></div>
-      {users.map((user) => <div className={`users-table ${user.active ? "" : "disabled-user"}`} key={user.id}><div className="managed-person"><Avatar name={user.name} imageUrl={user.avatarUrl} size="sm" /><span><strong>{user.name}{user.id === currentUser.id && <em>Você</em>}{!user.emailVerified && <em className="pending-verification">E-mail pendente</em>}</strong><small>{user.email}</small><small>{user.professionalRole ?? "Administrador"}{user.instagram ? ` · ${user.instagram}` : ""}</small></span></div><div className="presence-control"><span className={`presence-badge ${user.online ? "online" : ""}`}><i />{user.online ? "Online" : "Offline"}</span><Toggle checked={user.active} disabled={user.role === "admin"} label="Usuário ativo" onChange={(checked) => void updateAccess(user, { active: checked })} /></div>{accessLabels.map(({ key }) => <div key={key}><Toggle checked={user.permissions[key]} disabled={user.role === "admin" || !user.active} label={`Acesso a ${key}`} onChange={() => void updateAccess(user, { permission: key })} /></div>)}<div className="user-actions"><button title="Enviar redefinição de senha" disabled={!user.emailVerified} onClick={() => open({ kind: "email", user })}><Mail size={16} /></button><button className="danger-icon" title="Excluir usuário" disabled={user.role === "admin" || user.id === currentUser.id} onClick={() => open({ kind: "delete", user })}><Trash2 size={16} /></button></div></div>)}
+      {users.map((user) => <div className={`users-table ${user.active ? "" : "disabled-user"}`} key={user.id}><button type="button" className="managed-person" onClick={() => open({ kind: "profile", user })} aria-label={`Ver informações de ${user.name}`}><Avatar name={user.name} imageUrl={user.avatarUrl} size="sm" /><span><strong>{user.name}{user.id === currentUser.id && <em>Você</em>}{!user.emailVerified && <em className="pending-verification">E-mail pendente</em>}</strong><small>{user.email}</small><small>{user.professionalRole ?? "Administrador"}{user.instagram ? ` · ${user.instagram}` : ""}</small></span></button><div className="presence-control"><span className={`presence-badge ${user.online ? "online" : ""}`}><i />{user.online ? "Online" : "Offline"}</span><Toggle checked={user.active} disabled={user.role === "admin"} label="Usuário ativo" onChange={(checked) => void updateAccess(user, { active: checked })} /></div>{accessLabels.map(({ key }) => <div key={key}><Toggle checked={user.permissions[key]} disabled={user.role === "admin" || !user.active} label={`Acesso a ${key}`} onChange={() => void updateAccess(user, { permission: key })} /></div>)}<div className="user-actions"><button title="Enviar redefinição de senha" disabled={!user.emailVerified} onClick={() => open({ kind: "email", user })}><Mail size={16} /></button><button className="danger-icon" title="Excluir usuário" disabled={user.role === "admin" || user.id === currentUser.id} onClick={() => open({ kind: "delete", user })}><Trash2 size={16} /></button></div></div>)}
       {!users.length && <Empty text="Nenhum usuário cadastrado." />}
     </div>
 
     {modal?.kind === "password" && <Modal title="Alterar minha senha" subtitle="As outras sessões abertas serão encerradas." onClose={() => setModal(null)}><form className="modal-form" onSubmit={changeOwnPassword}><Field label="Senha atual" name="currentPassword" type="password" required /><Field label="Nova senha" name="newPassword" type="password" minLength={10} required /><Field label="Confirmar nova senha" name="confirmation" type="password" minLength={10} required />{error && <p className="form-error">{error}</p>}<div className="modal-actions"><button type="button" className="outline" onClick={() => setModal(null)}>Cancelar</button><button className="primary" disabled={busy}>{busy ? "Salvando..." : "Alterar senha"}</button></div></form></Modal>}
     {modal?.kind === "delete" && modal.user && <Modal title="Excluir usuário?" subtitle={`O acesso de ${modal.user.name} será removido permanentemente.`} tone="danger" onClose={() => setModal(null)}>{error && <p className="form-error">{error}</p>}<div className="modal-actions"><button className="outline" onClick={() => setModal(null)}>Cancelar</button><button className="danger-button" disabled={busy} onClick={() => void removeUser()}>{busy ? "Excluindo..." : "Excluir usuário"}</button></div></Modal>}
     {modal?.kind === "email" && modal.user && <Modal title="Enviar redefinição?" subtitle={`Enviaremos um link seguro para ${modal.user.email}. O link expira em 30 minutos.`} onClose={() => setModal(null)}>{error && <p className="form-error">{error}</p>}<div className="modal-actions"><button className="outline" onClick={() => setModal(null)}>Cancelar</button><button className="primary" disabled={busy} onClick={() => void emailReset()}>{busy ? "Enviando..." : "Enviar e-mail"}</button></div></Modal>}
+    {modal?.kind === "profile" && modal.user && <Modal title="Informações do usuário" subtitle="Perfil, presença e acessos cadastrados no sistema." onClose={() => setModal(null)}><div className="user-profile-modal"><div className="user-profile-hero"><Avatar name={modal.user.name} imageUrl={modal.user.avatarUrl} online={modal.user.online} /><div><h3>{modal.user.name}</h3><p>{modal.user.professionalRole ?? (modal.user.role === "admin" ? "Administrador mestre" : "Equipe Karrer")}</p><span className={`profile-state ${modal.user.online ? "online" : ""}`}><i />{modal.user.online ? "Online agora" : modal.user.lastSeenAt ? `Visto por último ${new Date(modal.user.lastSeenAt).toLocaleString("pt-BR")}` : "Offline"}</span></div></div><dl className="user-profile-details"><div><dt>E-mail</dt><dd>{modal.user.email}</dd></div><div><dt>Instagram</dt><dd>{modal.user.instagram || "Não informado"}</dd></div><div><dt>Tipo de acesso</dt><dd>{modal.user.role === "admin" ? "Administrador mestre" : "Usuário da equipe"}</dd></div><div><dt>Conta</dt><dd>{modal.user.active ? "Ativa" : "Desativada"} · {modal.user.emailVerified ? "E-mail confirmado" : "E-mail pendente"}</dd></div><div><dt>Cadastrado em</dt><dd>{new Date(modal.user.createdAt).toLocaleString("pt-BR")}</dd></div></dl><div className="user-profile-permissions"><span>Acessos liberados</span><div>{accessLabels.map(({ key, label }) => <em className={modal.user!.permissions[key] ? "allowed" : ""} key={key}>{label}</em>)}</div><small>{modal.user.role === "admin" ? "O administrador mestre possui acesso completo e protegido." : "As permissões só podem ser alteradas por você, administrador mestre."}</small></div></div></Modal>}
   </section>;
 }
 

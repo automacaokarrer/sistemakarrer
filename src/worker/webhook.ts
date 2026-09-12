@@ -1,5 +1,5 @@
 import { safeEqual } from "./auth";
-import { HttpError, json, readJson } from "./http";
+import { HttpError, json, normalizePhone, readJson } from "./http";
 import { messageSelect, type MessageRow } from "./repository";
 import type { AppEnv, ZApiPayload } from "./types";
 import { normalizeIncoming, normalizeStatusUpdate, storeRemoteMedia } from "./zapi";
@@ -10,13 +10,35 @@ export async function handleZApiWebhook(request: Request, env: AppEnv, suppliedT
   if (!(await safeEqual(suppliedToken, env.ZAPI_WEBHOOK_TOKEN))) throw new HttpError("Webhook não autorizado.", 401);
 
   const payload = await readJson<ZApiPayload>(request, 2_000_000);
+  if (payload.type?.toLowerCase() === "presencechatcallback") {
+    const phone = normalizePhone(payload.phone);
+    const presence = payload.status?.toUpperCase();
+    const online = presence === "AVAILABLE" || presence === "COMPOSING" || presence === "RECORDING";
+    const lastSeenValue = payload.lastSeen && payload.lastSeen > 0 ? payload.lastSeen : Date.now();
+    const lastSeenAt = new Date(lastSeenValue < 1_000_000_000_000 ? lastSeenValue * 1_000 : lastSeenValue).toISOString();
+    const conversation = await env.DB.prepare("SELECT c.id FROM conversations c JOIN contacts ct ON ct.id = c.contact_id WHERE ct.phone = ?1")
+      .bind(phone).first<{ id: string }>();
+    if (conversation) {
+      await env.DB.prepare("UPDATE conversations SET online = ?1, last_seen_at = ?2, updated_at = ?3 WHERE id = ?4")
+        .bind(online ? 1 : 0, lastSeenAt, new Date().toISOString(), conversation.id).run();
+      await env.CHAT_ROOMS.getByName(conversation.id).broadcast({ type: "conversation.presence", online, lastSeenAt });
+      await env.CHAT_ROOMS.getByName(INBOX_ROOM).broadcast({ type: "conversation.updated", conversationId: conversation.id });
+    }
+    return json({ ok: true });
+  }
   const statusUpdates = normalizeStatusUpdate(payload);
   if (statusUpdates) {
     if (statusUpdates.length) {
+      const affected = await Promise.all(statusUpdates.map(({ messageId, status }) => env.DB.prepare("SELECT id, conversation_id AS conversationId FROM messages WHERE zapi_message_id = ?1")
+        .bind(messageId).first<{ id: string; conversationId: string }>().then((message) => ({ message, status }))));
       await env.DB.batch(statusUpdates.map(({ messageId, status }) =>
         env.DB.prepare("UPDATE messages SET status = ?1 WHERE zapi_message_id = ?2")
           .bind(status, messageId),
       ));
+      await Promise.all(affected.filter(({ message }) => Boolean(message)).map(async ({ message, status }) => {
+        await env.CHAT_ROOMS.getByName(message!.conversationId).broadcast({ type: "message.status", messageId: message!.id, status });
+        await env.CHAT_ROOMS.getByName(INBOX_ROOM).broadcast({ type: "conversation.updated", conversationId: message!.conversationId });
+      }));
     }
     return json({ ok: true, updated: statusUpdates.length });
   }
@@ -60,6 +82,7 @@ export async function handleZApiWebhook(request: Request, env: AppEnv, suppliedT
         incoming.direction === "inbound" ? "received" : "sent", incoming.zapiMessageId, incoming.createdAt),
     env.DB.prepare(`UPDATE conversations SET last_message_at = ?1,
       unread_count = unread_count + CASE WHEN ?2 = 'inbound' THEN 1 ELSE 0 END,
+      last_seen_at = CASE WHEN ?2 = 'inbound' THEN ?1 ELSE last_seen_at END,
       updated_at = ?1 WHERE id = ?3`)
       .bind(incoming.createdAt, incoming.direction, conversation.id),
   ]);
