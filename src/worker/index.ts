@@ -10,6 +10,7 @@ import {
   listConversations,
   listMessages,
   sendMessage,
+  sendMediaMessage,
   updateClassification,
   uploadMedia,
 } from "./repository";
@@ -17,6 +18,7 @@ import type { AppEnv } from "./types";
 import { handleZApiWebhook } from "./webhook";
 import { createUser, deleteUser, getUserAvatar, listUsers, registerUser, sendPasswordReset, updateUserAccess } from "./settings";
 import { uploadContactDocuments } from "./drive";
+import { INBOX_ROOM } from "./realtime";
 
 function withCookie(payload: unknown, cookie: string, status = 200): Response {
   return json(payload, { status, headers: { "Set-Cookie": cookie } });
@@ -114,6 +116,17 @@ async function routeApi(request: Request, env: AppEnv): Promise<Response> {
   if (messages && method === "POST") {
     requirePermission(user, "chat");
     return sendMessage(request, env, user, messages[1]);
+  }
+
+  const conversationMedia = routeMatch(pathname, /^\/api\/conversations\/([^/]+)\/media$/);
+  if (conversationMedia && method === "POST") {
+    requirePermission(user, "chat");
+    return sendMediaMessage(request, env, user, conversationMedia[1]);
+  }
+
+  if (method === "GET" && pathname === "/api/conversations/ws") {
+    requirePermission(user, "chat");
+    return env.CHAT_ROOMS.getByName(INBOX_ROOM).fetch(request);
   }
 
   const websocket = routeMatch(pathname, /^\/api\/conversations\/([^/]+)\/ws$/);

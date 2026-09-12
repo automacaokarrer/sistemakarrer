@@ -1,6 +1,7 @@
 import { HttpError, cleanText, json, normalizePhone, readJson } from "./http";
 import type { AppEnv, SessionUser } from "./types";
-import { sendText } from "./zapi";
+import { sendMedia, sendText } from "./zapi";
+import { INBOX_ROOM } from "./realtime";
 
 type Classification = "hot" | "warm" | "cold";
 
@@ -122,7 +123,62 @@ export async function sendMessage(request: Request, env: AppEnv, user: SessionUs
   await env.DB.prepare("UPDATE messages SET status = ?1, zapi_message_id = ?2, error_message = ?3 WHERE id = ?4").bind(status, providerId, failure, id).run();
   const message: MessageRow = { id, conversationId, direction: "outbound", type: "text", body, mediaKey: null, fileName: null, duration: null, status, createdAt };
   await env.CHAT_ROOMS.getByName(conversationId).broadcast({ type: "message.new", message });
+  await env.CHAT_ROOMS.getByName(INBOX_ROOM).broadcast({ type: "conversation.updated", conversationId });
   await audit(env, user, "message.send", "conversation", conversationId, { messageId: id, status });
+  return json({ message }, { status: status === "failed" ? 502 : 201 });
+}
+
+function base64(buffer: ArrayBuffer): string {
+  const bytes = new Uint8Array(buffer);
+  let binary = "";
+  for (let offset = 0; offset < bytes.length; offset += 32_768) {
+    binary += String.fromCharCode(...bytes.subarray(offset, Math.min(offset + 32_768, bytes.length)));
+  }
+  return btoa(binary);
+}
+
+export async function sendMediaMessage(request: Request, env: AppEnv, user: SessionUser, conversationId: string): Promise<Response> {
+  const form = await request.formData();
+  const file = form.get("file");
+  const kind = form.get("kind");
+  if (!(file instanceof File) || !file.size) throw new HttpError("Selecione um arquivo válido.", 422);
+  if (kind !== "image" && kind !== "audio" && kind !== "document") throw new HttpError("Tipo de arquivo inválido.", 422);
+  if (file.size > 10 * 1024 * 1024) throw new HttpError("O arquivo deve ter no máximo 10 MB.", 413);
+  if (kind === "image" && !["image/jpeg", "image/png", "image/webp"].includes(file.type)) throw new HttpError("Use uma imagem JPG, PNG ou WebP.", 422);
+  if (kind === "audio" && !file.type.startsWith("audio/")) throw new HttpError("Formato de áudio inválido.", 422);
+  const safeName = (file.name || `${kind}.bin`).replace(/[^a-zA-Z0-9._-]/g, "_");
+  const caption = cleanText(form.get("caption"), 2_000);
+  const durationValue = Number(form.get("duration") ?? 0);
+  const duration = kind === "audio" && Number.isFinite(durationValue) ? Math.max(0, Math.min(Math.round(durationValue), 3_600)) : null;
+  const conversation = await env.DB.prepare("SELECT ct.phone FROM conversations c JOIN contacts ct ON ct.id = c.contact_id WHERE c.id = ?1")
+    .bind(conversationId).first<{ phone: string }>();
+  if (!conversation) throw new HttpError("Conversa não encontrada.", 404);
+
+  const id = crypto.randomUUID();
+  const createdAt = new Date().toISOString();
+  const mediaKey = `uploads/${createdAt.slice(0, 10)}/${id}-${safeName}`;
+  const buffer = await file.arrayBuffer();
+  await env.MEDIA.put(mediaKey, buffer, { httpMetadata: { contentType: file.type || "application/octet-stream" }, customMetadata: { uploadedBy: user.id } });
+  await env.DB.batch([
+    env.DB.prepare(`INSERT INTO messages (id, conversation_id, sender_user_id, direction, type, body, media_key, file_name, mime, size, duration, status, created_at)
+      VALUES (?1, ?2, ?3, 'outbound', ?4, ?5, ?6, ?7, ?8, ?9, ?10, 'sending', ?11)`)
+      .bind(id, conversationId, user.id, kind, caption, mediaKey, safeName, file.type || "application/octet-stream", file.size, duration, createdAt),
+    env.DB.prepare("UPDATE conversations SET last_message_at = ?1, updated_at = ?1 WHERE id = ?2").bind(createdAt, conversationId),
+  ]);
+  let status: MessageRow["status"] = "sent";
+  let providerId: string | null = null;
+  let failure: string | null = null;
+  try {
+    providerId = await sendMedia(env, conversation.phone, kind, `data:${file.type || "application/octet-stream"};base64,${base64(buffer)}`, safeName, caption);
+  } catch (reason) {
+    status = "failed";
+    failure = reason instanceof Error ? reason.message : "Falha no envio";
+  }
+  await env.DB.prepare("UPDATE messages SET status = ?1, zapi_message_id = ?2, error_message = ?3 WHERE id = ?4").bind(status, providerId, failure, id).run();
+  const message: MessageRow = { id, conversationId, direction: "outbound", type: kind, body: caption, mediaKey, fileName: safeName, duration, status, createdAt };
+  await env.CHAT_ROOMS.getByName(conversationId).broadcast({ type: "message.new", message });
+  await env.CHAT_ROOMS.getByName(INBOX_ROOM).broadcast({ type: "conversation.updated", conversationId });
+  await audit(env, user, "message.send", "conversation", conversationId, { messageId: id, type: kind, status });
   return json({ message }, { status: status === "failed" ? 502 : 201 });
 }
 

@@ -14,7 +14,6 @@ import {
   MessageCircle,
   Mic,
   Paperclip,
-  Play,
   Plus,
   Search,
   Send,
@@ -198,6 +197,59 @@ function Dashboard({ user, googleDrive, onLogout }: { user: User; googleDrive: b
 
   useEffect(() => { if (user.permissions.chat || user.permissions.leads) void reloadConversations(); }, [reloadConversations, user.permissions.chat, user.permissions.leads]);
   useEffect(() => {
+    if (!user.permissions.chat) return;
+    let socket: WebSocket | null = null;
+    let reconnectTimer: number | null = null;
+    let heartbeatTimer: number | null = null;
+    let refreshTimer: number | null = null;
+    let stopped = false;
+
+    const clearHeartbeat = () => {
+      if (heartbeatTimer !== null) window.clearInterval(heartbeatTimer);
+      heartbeatTimer = null;
+    };
+    const scheduleRefresh = () => {
+      if (refreshTimer !== null) window.clearTimeout(refreshTimer);
+      refreshTimer = window.setTimeout(() => void reloadConversations(), 100);
+    };
+    const connect = () => {
+      if (stopped || socket?.readyState === WebSocket.OPEN || socket?.readyState === WebSocket.CONNECTING) return;
+      const protocol = location.protocol === "https:" ? "wss:" : "ws:";
+      socket = new WebSocket(`${protocol}//${location.host}/api/conversations/ws`);
+      socket.onopen = () => {
+        clearHeartbeat();
+        heartbeatTimer = window.setInterval(() => {
+          if (socket?.readyState === WebSocket.OPEN) socket.send("ping");
+        }, 25_000);
+      };
+      socket.onmessage = (event) => {
+        try {
+          const data = JSON.parse(event.data) as { type?: string };
+          if (data.type === "conversation.updated") scheduleRefresh();
+        } catch { /* mensagens de controle são ignoradas */ }
+      };
+      socket.onclose = () => {
+        clearHeartbeat();
+        socket = null;
+        if (!stopped) reconnectTimer = window.setTimeout(connect, 1_500);
+      };
+    };
+
+    const reconnectWhenVisible = () => {
+      if (document.visibilityState === "visible") connect();
+    };
+    connect();
+    document.addEventListener("visibilitychange", reconnectWhenVisible);
+    return () => {
+      stopped = true;
+      document.removeEventListener("visibilitychange", reconnectWhenVisible);
+      if (reconnectTimer !== null) window.clearTimeout(reconnectTimer);
+      if (refreshTimer !== null) window.clearTimeout(refreshTimer);
+      clearHeartbeat();
+      socket?.close(1000, "dashboard closed");
+    };
+  }, [reloadConversations, user.permissions.chat]);
+  useEffect(() => {
     const ping = () => { if (document.visibilityState === "visible") void api("/api/auth/presence", { method: "POST" }).catch(() => undefined); };
     ping();
     const timer = window.setInterval(ping, 5 * 60 * 1000);
@@ -299,7 +351,14 @@ function ConversationPanel({ conversation, onBack, onOpenLead, onRefresh }: { co
   const [text, setText] = useState("");
   const [loading, setLoading] = useState(false);
   const [sending, setSending] = useState(false);
+  const [recording, setRecording] = useState(false);
+  const [sendError, setSendError] = useState("");
   const endRef = useRef<HTMLDivElement>(null);
+  const imageInputRef = useRef<HTMLInputElement>(null);
+  const documentInputRef = useRef<HTMLInputElement>(null);
+  const recorderRef = useRef<MediaRecorder | null>(null);
+  const recorderStreamRef = useRef<MediaStream | null>(null);
+  const recordingStartedAtRef = useRef(0);
 
   const loadMessages = useCallback(async () => {
     setLoading(true);
@@ -313,18 +372,58 @@ function ConversationPanel({ conversation, onBack, onOpenLead, onRefresh }: { co
   }, [conversation.id]);
 
   useEffect(() => void loadMessages(), [loadMessages]);
+  useEffect(() => () => {
+    const recorder = recorderRef.current;
+    if (recorder && recorder.state !== "inactive") {
+      recorder.ondataavailable = null;
+      recorder.onstop = null;
+      recorder.stop();
+    }
+    recorderStreamRef.current?.getTracks().forEach((track) => track.stop());
+  }, [conversation.id]);
   useEffect(() => {
-    const protocol = location.protocol === "https:" ? "wss:" : "ws:";
-    const socket = new WebSocket(`${protocol}//${location.host}/api/conversations/${conversation.id}/ws`);
-    socket.onmessage = (event) => {
-      try {
-        const data = JSON.parse(event.data) as { type: string; message?: Message };
-        if (data.type === "message.new" && data.message) {
-          setMessages((current) => current.some((item) => item.id === data.message?.id) ? current : [...current, data.message!]);
-        }
-      } catch { /* mensagens de controle são ignoradas */ }
+    let socket: WebSocket | null = null;
+    let reconnectTimer: number | null = null;
+    let heartbeatTimer: number | null = null;
+    let stopped = false;
+
+    const clearHeartbeat = () => {
+      if (heartbeatTimer !== null) window.clearInterval(heartbeatTimer);
+      heartbeatTimer = null;
     };
-    return () => socket.close(1000, "conversation changed");
+    const connect = () => {
+      if (stopped || socket?.readyState === WebSocket.OPEN || socket?.readyState === WebSocket.CONNECTING) return;
+      const protocol = location.protocol === "https:" ? "wss:" : "ws:";
+      socket = new WebSocket(`${protocol}//${location.host}/api/conversations/${conversation.id}/ws`);
+      socket.onopen = () => {
+        clearHeartbeat();
+        heartbeatTimer = window.setInterval(() => {
+          if (socket?.readyState === WebSocket.OPEN) socket.send("ping");
+        }, 25_000);
+      };
+      socket.onmessage = (event) => {
+        try {
+          const data = JSON.parse(event.data) as { type: string; message?: Message };
+          if (data.type === "message.new" && data.message) {
+            setMessages((current) => current.some((item) => item.id === data.message?.id) ? current : [...current, data.message!]);
+            requestAnimationFrame(() => endRef.current?.scrollIntoView({ behavior: "smooth" }));
+          }
+        } catch { /* mensagens de controle são ignoradas */ }
+      };
+      socket.onclose = () => {
+        clearHeartbeat();
+        socket = null;
+        if (!stopped) reconnectTimer = window.setTimeout(connect, 1_500);
+      };
+    };
+
+    connect();
+    return () => {
+      stopped = true;
+      if (reconnectTimer !== null) window.clearTimeout(reconnectTimer);
+      clearHeartbeat();
+      socket?.close(1000, "conversation changed");
+    };
   }, [conversation.id]);
 
   async function sendMessage(event: FormEvent) {
@@ -332,15 +431,59 @@ function ConversationPanel({ conversation, onBack, onOpenLead, onRefresh }: { co
     const body = text.trim();
     if (!body || sending) return;
     setSending(true);
+    setSendError("");
     try {
       const result = await api<{ message: Message }>(`/api/conversations/${conversation.id}/messages`, { method: "POST", body: JSON.stringify({ body }) });
       setMessages((current) => current.some((item) => item.id === result.message.id) ? current : [...current, result.message]);
       setText("");
       await onRefresh();
       requestAnimationFrame(() => endRef.current?.scrollIntoView({ behavior: "smooth" }));
+    } catch (reason) {
+      setSendError(reason instanceof Error ? reason.message : "Não foi possível enviar a mensagem.");
     } finally {
       setSending(false);
     }
+  }
+
+  async function sendAttachment(file: File, kind: "image" | "audio" | "document", duration?: number) {
+    if (sending) return;
+    setSending(true);
+    setSendError("");
+    const form = new FormData();
+    form.set("file", file); form.set("kind", kind);
+    if (text.trim() && kind !== "audio") form.set("caption", text.trim());
+    if (duration) form.set("duration", String(duration));
+    try {
+      const result = await api<{ message: Message }>(`/api/conversations/${conversation.id}/media`, { method: "POST", body: form });
+      setMessages((current) => current.some((item) => item.id === result.message.id) ? current : [...current, result.message]);
+      if (kind !== "audio") setText("");
+      await onRefresh();
+      requestAnimationFrame(() => endRef.current?.scrollIntoView({ behavior: "smooth" }));
+    } catch (reason) {
+      setSendError(reason instanceof Error ? reason.message : "Não foi possível enviar o arquivo.");
+    } finally { setSending(false); }
+  }
+
+  async function toggleRecording() {
+    if (recording) { recorderRef.current?.stop(); return; }
+    setSendError("");
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const preferred = ["audio/webm;codecs=opus", "audio/webm", "audio/mp4"].find((type) => MediaRecorder.isTypeSupported(type));
+      const recorder = new MediaRecorder(stream, preferred ? { mimeType: preferred } : undefined);
+      const chunks: Blob[] = [];
+      recorder.ondataavailable = (event) => { if (event.data.size) chunks.push(event.data); };
+      recorder.onstop = () => {
+        const duration = Math.max(1, Math.round((Date.now() - recordingStartedAtRef.current) / 1_000));
+        const mime = recorder.mimeType || "audio/webm";
+        recorderStreamRef.current?.getTracks().forEach((track) => track.stop());
+        recorderStreamRef.current = null; recorderRef.current = null; setRecording(false);
+        const blob = new Blob(chunks, { type: mime });
+        if (blob.size) void sendAttachment(new File([blob], `audio-${Date.now()}.${mime.includes("mp4") ? "m4a" : "webm"}`, { type: mime }), "audio", duration);
+      };
+      recorderRef.current = recorder; recorderStreamRef.current = stream; recordingStartedAtRef.current = Date.now();
+      recorder.start(); setRecording(true);
+    } catch { setSendError("Permita o acesso ao microfone para gravar o áudio."); }
   }
 
   return (
@@ -355,25 +498,29 @@ function ConversationPanel({ conversation, onBack, onOpenLead, onRefresh }: { co
         {loading && <div className="loading-messages"><LoaderCircle className="spin" size={15} /> Carregando mensagens...</div>}
         <div className="date-pill">Hoje</div>
         {messages.map((message) => <MessageBubble key={message.id} message={message} />)}
+        {sendError && <div className="message-error" role="alert">{sendError}</div>}
         {!loading && messages.length === 0 && <Empty text="Ainda não há mensagens nesta conversa." dark />}
         <div ref={endRef} />
       </div>
       <form className="composer" onSubmit={sendMessage}>
-        <button type="button" title="Anexar documento"><Paperclip size={20} /></button><button type="button" title="Enviar imagem"><Image size={19} /></button>
+        <input ref={documentInputRef} className="composer-file-input" type="file" accept=".pdf,.doc,.docx,.xls,.xlsx,.csv,.txt" onChange={(event) => { const file = event.target.files?.[0]; if (file) void sendAttachment(file, "document"); event.currentTarget.value = ""; }} />
+        <input ref={imageInputRef} className="composer-file-input" type="file" accept="image/jpeg,image/png,image/webp" onChange={(event) => { const file = event.target.files?.[0]; if (file) void sendAttachment(file, "image"); event.currentTarget.value = ""; }} />
+        <button type="button" title="Anexar documento" aria-label="Anexar documento" disabled={sending} onClick={() => documentInputRef.current?.click()}><Paperclip size={20} /></button><button type="button" title="Enviar imagem" aria-label="Enviar imagem" disabled={sending} onClick={() => imageInputRef.current?.click()}><Image size={19} /></button>
         <textarea aria-label="Mensagem" value={text} onChange={(event) => setText(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); event.currentTarget.form?.requestSubmit(); } }} placeholder="Escreva uma mensagem" rows={1} />
-        <button className="send-button" aria-label={text.trim() ? "Enviar" : "Gravar áudio"}>{text.trim() ? <Send size={19} /> : <Mic size={19} />}</button>
+        <button type={text.trim() ? "submit" : "button"} className={`send-button ${recording ? "recording" : ""}`} disabled={sending} onClick={text.trim() ? undefined : () => void toggleRecording()} aria-label={text.trim() ? "Enviar" : recording ? "Parar gravação" : "Gravar áudio"}>{text.trim() ? <Send size={19} /> : <Mic size={19} />}</button>
       </form>
     </div>
   );
 }
 
 function MessageBubble({ message }: { message: Message }) {
+  const mediaUrl = message.mediaKey ? `/api/media/${encodeURIComponent(message.mediaKey)}` : null;
   return (
     <div className={`message-row ${message.direction}`}>
       <div className={`bubble ${message.type}`}>
-        {message.type === "image" && <div className="media-placeholder"><Image /></div>}
-        {message.type === "audio" && <div className="audio-player"><button><Play size={15} fill="currentColor" /></button><span /><small>{message.duration ? `${message.duration}s` : "0:42"}</small></div>}
-        {message.type === "document" && <div className="document-message"><FileText /><span><strong>{message.fileName ?? message.body ?? "Documento"}</strong><small>Documento</small></span></div>}
+        {message.type === "image" && (mediaUrl ? <img className="message-image" src={mediaUrl} alt={message.body ?? "Imagem enviada"} /> : <div className="media-placeholder"><Image /></div>)}
+        {message.type === "audio" && (mediaUrl ? <audio className="message-audio" controls preload="metadata" src={mediaUrl} /> : <div className="audio-player"><Mic size={18} /><span /><small>{message.duration ? `${message.duration}s` : "Áudio"}</small></div>)}
+        {message.type === "document" && <a className="document-message" href={mediaUrl ?? undefined} target="_blank" rel="noreferrer"><FileText /><span><strong>{message.fileName ?? message.body ?? "Documento"}</strong><small>Abrir documento</small></span></a>}
         {message.body && message.type === "text" && <p>{message.body}</p>}
         <footer>{formatTime(message.createdAt)} {message.direction === "outbound" && <><span>· {message.status === "read" ? "Lido" : message.status === "failed" ? "Não enviado" : "Enviado"}</span><CheckCheck size={12} /></>}</footer>
       </div>

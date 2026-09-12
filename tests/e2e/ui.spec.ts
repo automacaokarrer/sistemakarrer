@@ -1,4 +1,4 @@
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test, type Page, type WebSocketRoute } from "@playwright/test";
 
 const now = new Date().toISOString();
 
@@ -9,7 +9,7 @@ async function mockAnonymous(page: Page) {
   }));
 }
 
-async function mockDashboard(page: Page) {
+async function mockDashboard(page: Page, additionalConversations: () => unknown[] = () => []) {
   const permissions = { chat: true, leads: true, clients: true, settings: true };
   const user = { id: "admin-1", name: "Ana Karrer", email: "ana@karrer.test", role: "admin", avatarUrl: null, professionalRole: "Administradora", permissions };
   const conversations = [{
@@ -31,10 +31,11 @@ async function mockDashboard(page: Page) {
     const path = new URL(route.request().url()).pathname;
     let body: unknown = { ok: true };
     if (path === "/api/auth/status") body = { setupRequired: false, user, features: { googleDrive: false } };
-    else if (path === "/api/conversations") body = { conversations };
+    else if (path === "/api/conversations") body = { conversations: [...conversations, ...additionalConversations()] };
     else if (path === "/api/contacts") body = { contacts };
     else if (path === "/api/leads/summary") body = { total: 1, hot: 1, warm: 0, cold: 0, averageFirstResponseMinutes: 4, daily: [] };
     else if (path === "/api/settings/users") body = { users };
+    else if (path.endsWith("/media") && route.request().method() === "POST") body = { message: { id: "message-upload", conversationId: "conversation-1", direction: "outbound", type: "image", body: "Imagem de teste", fileName: "foto.png", mediaKey: "uploads/test/foto.png", duration: null, status: "sent", createdAt: now } };
     else if (path.endsWith("/messages")) body = { messages: [] };
     await route.fulfill({ contentType: "application/json", body: JSON.stringify(body) });
   });
@@ -79,4 +80,38 @@ test("painel principal abre todos os módulos autorizados", async ({ page }, tes
   await expect(page.getByRole("heading", { name: "Configurações" })).toBeVisible();
   await expect(page.getByText("Equipe online")).toBeVisible();
   await expectNoHorizontalOverflow(page);
+});
+
+test("nova conversa aparece em tempo real sem recarregar a página", async ({ page }) => {
+  let additionalConversations: unknown[] = [];
+  let inboxSocket: WebSocketRoute | null = null;
+  await page.routeWebSocket(/\/api\/conversations\/ws$/, (socket) => { inboxSocket = socket; });
+  await page.routeWebSocket(/\/api\/conversations\/[^/]+\/ws$/, () => undefined);
+  await mockDashboard(page, () => additionalConversations);
+  await page.goto("/");
+  await expect(page.getByRole("button", { name: /Maria Oliveira/ })).toBeVisible();
+  await expect.poll(() => Boolean(inboxSocket)).toBe(true);
+
+  additionalConversations = [{
+    id: "conversation-2", contactId: "contact-2", createdAt: new Date().toISOString(), name: "Contato em tempo real", phone: "5592888888888",
+    bank: null, stage: "Primeiro contato", classification: "warm", score: 50, lastMessage: "Mensagem recebida agora",
+    lastMessageType: "text", lastMessageAt: new Date().toISOString(), unreadCount: 1, online: false, lastSeenAt: null, assigneeName: null,
+  }];
+  inboxSocket!.send(JSON.stringify({ type: "conversation.updated" }));
+
+  await expect(page.getByRole("button", { name: /Contato em tempo real/ })).toBeVisible();
+});
+
+test("ícone de imagem envia arquivo pelo compositor", async ({ page }) => {
+  await page.routeWebSocket(/\/api\/conversations\/ws$/, () => undefined);
+  await page.routeWebSocket(/\/api\/conversations\/[^/]+\/ws$/, () => undefined);
+  await mockDashboard(page);
+  await page.goto("/");
+  const chooserPromise = page.waitForEvent("filechooser");
+  await page.getByRole("button", { name: "Enviar imagem" }).click();
+  const chooser = await chooserPromise;
+  await chooser.setFiles({ name: "foto.png", mimeType: "image/png", buffer: Buffer.from("imagem") });
+  await expect(page.locator('img[alt="Imagem de teste"]')).toBeVisible();
+  await expect(page.getByRole("button", { name: "Anexar documento" })).toBeEnabled();
+  await expect(page.getByRole("button", { name: "Gravar áudio" })).toBeEnabled();
 });

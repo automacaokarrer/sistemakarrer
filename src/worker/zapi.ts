@@ -61,6 +61,30 @@ export async function sendText(env: AppEnv, phone: string, message: string): Pro
   return result.messageId ?? result.id ?? crypto.randomUUID();
 }
 
+export async function sendMedia(env: AppEnv, phone: string, kind: "image" | "audio" | "document", dataUrl: string, fileName: string | null, caption: string | null): Promise<string> {
+  if (!env.ZAPI_INSTANCE_ID || !env.ZAPI_INSTANCE_TOKEN || !env.ZAPI_CLIENT_TOKEN) {
+    if (env.ENVIRONMENT === "development") return `local-${crypto.randomUUID()}`;
+    throw new HttpError("Integração Z-API ainda não configurada.", 503);
+  }
+  const baseUrl = `https://api.z-api.io/instances/${encodeURIComponent(env.ZAPI_INSTANCE_ID)}/token/${encodeURIComponent(env.ZAPI_INSTANCE_TOKEN)}`;
+  const normalizedPhone = normalizePhone(phone);
+  const extension = (fileName?.split(".").pop() ?? "bin").toLowerCase().replace(/[^a-z0-9]/g, "") || "bin";
+  const endpoint = kind === "document" ? `${baseUrl}/send-document/${encodeURIComponent(extension)}` : `${baseUrl}/send-${kind}`;
+  const payload = kind === "image"
+    ? { phone: normalizedPhone, image: dataUrl, ...(caption ? { caption } : {}) }
+    : kind === "audio"
+      ? { phone: normalizedPhone, audio: dataUrl, waveform: true }
+      : { phone: normalizedPhone, document: dataUrl, ...(fileName ? { fileName } : {}), ...(caption ? { caption } : {}) };
+  const response = await fetch(endpoint, {
+    method: "POST",
+    headers: { "Client-Token": env.ZAPI_CLIENT_TOKEN, "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  if (!response.ok) throw new HttpError("A Z-API recusou o envio do arquivo.", 502);
+  const result = await response.json<{ messageId?: string; id?: string; zaapId?: string }>();
+  return result.messageId ?? result.id ?? result.zaapId ?? crypto.randomUUID();
+}
+
 export function normalizeIncoming(payload: ZApiPayload): {
   phone: string;
   name: string;

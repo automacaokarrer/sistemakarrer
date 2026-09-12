@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { HttpError } from "./http";
-import { normalizeIncoming, normalizeStatusUpdate, sendText } from "./zapi";
+import { normalizeIncoming, normalizeStatusUpdate, sendMedia, sendText } from "./zapi";
 
 afterEach(() => vi.restoreAllMocks());
 
@@ -74,5 +74,26 @@ describe("webhook Z-API", () => {
     expect(providerId).toBe("za-canonical");
     expect(fetchMock).toHaveBeenCalledTimes(3);
     expect(JSON.parse(String(fetchMock.mock.calls[2]?.[1]?.body))).toMatchObject({ phone: "559284078295" });
+  });
+
+  it("envia imagem em Base64 pelo endpoint oficial", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(Response.json({ messageId: "za-image" }));
+    const providerId = await sendMedia({
+      ENVIRONMENT: "production", ZAPI_INSTANCE_ID: "instance", ZAPI_INSTANCE_TOKEN: "token", ZAPI_CLIENT_TOKEN: "client",
+    } as never, "5592999990000", "image", "data:image/png;base64,AAAA", "foto.png", "Legenda");
+
+    expect(providerId).toBe("za-image");
+    expect(String(fetchMock.mock.calls[0]?.[0])).toContain("/send-image");
+    expect(JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body))).toMatchObject({ phone: "5592999990000", image: "data:image/png;base64,AAAA", caption: "Legenda" });
+  });
+
+  it("envia documento com extensão e nome corretos", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(Response.json({ id: "za-document" }));
+    await sendMedia({
+      ENVIRONMENT: "production", ZAPI_INSTANCE_ID: "instance", ZAPI_INSTANCE_TOKEN: "token", ZAPI_CLIENT_TOKEN: "client",
+    } as never, "5592999990000", "document", "data:application/pdf;base64,AAAA", "contrato.pdf", null);
+
+    expect(String(fetchMock.mock.calls[0]?.[0])).toContain("/send-document/pdf");
+    expect(JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body))).toMatchObject({ fileName: "contrato.pdf" });
   });
 });

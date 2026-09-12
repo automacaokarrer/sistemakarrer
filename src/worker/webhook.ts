@@ -3,6 +3,7 @@ import { HttpError, json, readJson } from "./http";
 import { messageSelect, type MessageRow } from "./repository";
 import type { AppEnv, ZApiPayload } from "./types";
 import { normalizeIncoming, normalizeStatusUpdate, storeRemoteMedia } from "./zapi";
+import { INBOX_ROOM } from "./realtime";
 
 export async function handleZApiWebhook(request: Request, env: AppEnv, suppliedToken: string): Promise<Response> {
   if (!env.ZAPI_WEBHOOK_TOKEN) throw new HttpError("Webhook Z-API ainda não configurado.", 503);
@@ -65,5 +66,6 @@ export async function handleZApiWebhook(request: Request, env: AppEnv, suppliedT
 
   const message = await env.DB.prepare(`${messageSelect} WHERE id = ?1`).bind(messageId).first<MessageRow>();
   if (message) await env.CHAT_ROOMS.getByName(conversation.id).broadcast({ type: "message.new", message });
+  await env.CHAT_ROOMS.getByName(INBOX_ROOM).broadcast({ type: "conversation.updated", conversationId: conversation.id });
   return json({ ok: true }, { status: 201 });
 }
