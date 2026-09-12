@@ -21,8 +21,8 @@ Este arquivo registra decisões, estado de produção e procedimentos importante
 - D1: `karrer-atendimento-db`.
 - R2: `karrer-atendimento-media`.
 - Durable Object: `ChatRoom`.
-- Última versão Cloudflare validada nesta data: `131eda96-db83-4226-8e1f-c675b27f3cb3`.
-- Commit de código correspondente: `08d5b81`.
+- Última versão Cloudflare validada nesta data: `f50d079c-446b-4ccb-a5e9-39a672bb0a66`.
+- Commit de código correspondente: `7ec5c12`.
 - O endpoint protegido do webhook Z-API respondeu corretamente após o deploy.
 
 ## Funcionalidades implementadas
@@ -42,6 +42,9 @@ Este arquivo registra decisões, estado de produção e procedimentos importante
 - Confirmações de mensagem mudam em tempo real entre enviado, entregue e lido. O cabeçalho exibe presença e visto por último quando a Z-API fornece esses eventos.
 - Na administração, clicar em um usuário abre um modal de perfil com foto, função, presença, conta e permissões. Alterações de acessos continuam exclusivas do administrador mestre e protegidas pela API.
 - Telefones brasileiros são apresentados com DDD e nono dígito, inclusive quando a origem ainda fornece um número móvel antigo de oito dígitos.
+- Ao abrir uma conversa, o contador de mensagens não lidas é zerado no banco e desaparece em tempo real para a equipe. Novas mensagens recebidas incrementam novamente o contador.
+- A primeira pessoa que abre uma conversa ainda sem responsável assume o atendimento; o nome do atendente aparece em um badge na lista e a atribuição é transmitida em tempo real.
+- A foto de perfil do contato é consultada pela Z-API, copiada para o R2 privado e renovada a cada sete dias. Quando indisponível por privacidade ou ausência de foto, a interface usa as iniciais.
 - Filtros, métricas e exportação CSV de leads.
 - Cadastro completo de clientes e preenchimento de endereço por CEP.
 - Upload de até 10 documentos por cliente, máximo de 10 MB por arquivo e 16 MB no total.
@@ -105,7 +108,8 @@ npm.cmd run build
 ## Migrações e deploy
 
 - A migração `migrations/0004_user_profiles.sql` adiciona perfis, origem do cadastro, índice de presença e documentos dos clientes.
-- Ela já estava aplicada no D1 remoto na última verificação.
+- A migração `migrations/0005_contact_avatar_cache.sql` adiciona as referências e o controle de renovação do cache privado das fotos dos contatos.
+- Todas as migrações até `0005_contact_avatar_cache.sql` estão aplicadas no D1 remoto; a última conferência não encontrou pendências.
 
 ### Runbook de deploy no Cloudflare
 
@@ -211,5 +215,6 @@ Deploy e push são operações diferentes: o deploy publica os arquivos locais n
 - O carregamento progressivo do histórico foi publicado e validado em produção na versão `692106cd-72f9-4920-ad3e-41b93effa8d0`, correspondente ao commit `52241f7`.
 - As prévias de mídia, confirmação de leitura em tempo real, presença/visto por último, modal completo de usuário e telefone com nono dígito foram publicados e validados em produção na versão `0baffa39-f103-44e0-8cb8-12dfd1477425`, correspondente ao commit `2cec92e`.
 - O callback de presença da Z-API foi cadastrado após autorização explícita e está direcionado ao endpoint protegido já processado pelo Worker.
+- Leitura sincronizada, atribuição automática do atendente e fotos dos contatos foram publicadas e validadas na versão `f50d079c-446b-4ccb-a5e9-39a672bb0a66`, correspondente ao commit `7ec5c12`.
 - O player redesenhado de prévia de áudio foi publicado e validado em produção na versão `131eda96-db83-4226-8e1f-c675b27f3cb3`, correspondente ao commit `08d5b81`.
 - Continua pendente configurar no Cloudflare os três secrets do Google Drive usando as credenciais da conta de serviço institucional da Karrer e repetir o deploy e o teste de upload.
