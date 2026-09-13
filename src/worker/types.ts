@@ -5,6 +5,9 @@ export interface SecretBindings {
   ZAPI_CLIENT_TOKEN?: string;
   ZAPI_WEBHOOK_TOKEN?: string;
   RESEND_API_KEY?: string;
+  OPENAI_API_KEY?: string;
+  OPENAI_LUNA_AGENT_ID?: string;
+  OPENAI_TRANSCRIPTION_MODEL?: string;
   EMAIL_FROM?: string;
   APP_BASE_URL?: string;
   GOOGLE_SERVICE_ACCOUNT_EMAIL?: string;

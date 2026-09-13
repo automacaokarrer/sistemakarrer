@@ -4,6 +4,7 @@ import { messageSelect, type MessageRow } from "./repository";
 import type { AppEnv, ZApiPayload } from "./types";
 import { normalizeIncoming, normalizeStatusUpdate, storeRemoteMedia } from "./zapi";
 import { INBOX_ROOM } from "./realtime";
+import { scheduleHumanConversationMemory } from "./luna-passive";
 
 export function presencePhoneCandidates(phone: string): string[] {
   if (!phone.startsWith("55")) return [phone];
@@ -13,7 +14,8 @@ export function presencePhoneCandidates(phone: string): string[] {
   return [phone];
 }
 
-export async function handleZApiWebhook(request: Request, env: AppEnv, suppliedToken: string): Promise<Response> {
+export async function handleZApiWebhook(request: Request, env: AppEnv, suppliedToken: string,
+  ctx?: ExecutionContext): Promise<Response> {
   if (!env.ZAPI_WEBHOOK_TOKEN) throw new HttpError("Webhook Z-API ainda não configurado.", 503);
   if (!(await safeEqual(suppliedToken, env.ZAPI_WEBHOOK_TOKEN))) throw new HttpError("Webhook não autorizado.", 401);
 
@@ -103,5 +105,7 @@ export async function handleZApiWebhook(request: Request, env: AppEnv, suppliedT
   const message = await env.DB.prepare(`${messageSelect} WHERE id = ?1`).bind(messageId).first<MessageRow>();
   if (message) await env.CHAT_ROOMS.getByName(conversation.id).broadcast({ type: "message.new", message });
   await env.CHAT_ROOMS.getByName(INBOX_ROOM).broadcast({ type: "conversation.updated", conversationId: conversation.id });
+  scheduleHumanConversationMemory(env, ctx, { id: messageId, conversationId: conversation.id, direction: incoming.direction,
+    type: incoming.type, body: incoming.body, mediaKey, fileName: incoming.fileName, mime: incoming.mime, createdAt: incoming.createdAt });
   return json({ ok: true }, { status: 201 });
 }

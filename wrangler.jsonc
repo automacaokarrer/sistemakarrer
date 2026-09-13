@@ -41,9 +41,13 @@
     "enabled": true,
     "head_sampling_rate": 1
   },
+  "secrets": {
+    "required": ["OPENAI_API_KEY", "OPENAI_LUNA_AGENT_ID"]
+  },
   "vars": {
     "APP_NAME": "Karrer Atendimento",
     "ENVIRONMENT": "production",
-    "APP_BASE_URL": "https://crmkarrer.com.br"
+    "APP_BASE_URL": "https://crmkarrer.com.br",
+    "OPENAI_TRANSCRIPTION_MODEL": "gpt-4o-mini-transcribe"
   }
 }

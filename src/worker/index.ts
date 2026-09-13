@@ -24,12 +24,13 @@ import { handleZApiWebhook } from "./webhook";
 import { createUser, deleteUser, getUserAvatar, listLeadAttendants, listUsers, registerUser, sendPasswordReset, updateUserAccess } from "./settings";
 import { uploadContactDocuments } from "./drive";
 import { INBOX_ROOM } from "./realtime";
+import { handleLunaRequest } from "./luna";
 
 function withCookie(payload: unknown, cookie: string, status = 200): Response {
   return json(payload, { status, headers: { "Set-Cookie": cookie } });
 }
 
-async function routeApi(request: Request, env: AppEnv): Promise<Response> {
+async function routeApi(request: Request, env: AppEnv, ctx: ExecutionContext): Promise<Response> {
   const url = new URL(request.url);
   const { pathname } = url;
   const method = request.method.toUpperCase();
@@ -60,7 +61,7 @@ async function routeApi(request: Request, env: AppEnv): Promise<Response> {
   if (method === "POST" && pathname === "/api/auth/register") return registerUser(request, env);
 
   const webhook = routeMatch(pathname, /^\/api\/webhooks\/zapi\/([^/]+)$/);
-  if (method === "POST" && webhook) return handleZApiWebhook(request, env, decodeURIComponent(webhook[1]));
+  if (method === "POST" && webhook) return handleZApiWebhook(request, env, decodeURIComponent(webhook[1]), ctx);
 
   const user = await requireUser(request, env);
   if (method === "POST" && pathname === "/api/auth/presence") {
@@ -91,6 +92,10 @@ async function routeApi(request: Request, env: AppEnv): Promise<Response> {
   if (method === "GET" && pathname === "/api/leads/attendants") {
     requirePermission(user, "leads");
     return listLeadAttendants(env);
+  }
+  if (method === "POST" && pathname === "/api/ai/luna") {
+    requireAnyPermission(user, ["chat", "leads", "clients"]);
+    return handleLunaRequest(request, env, user);
   }
   if (method === "GET" && pathname === "/api/contacts") {
     requirePermission(user, "clients");
@@ -135,13 +140,13 @@ async function routeApi(request: Request, env: AppEnv): Promise<Response> {
   }
   if (messages && method === "POST") {
     requirePermission(user, "chat");
-    return sendMessage(request, env, user, messages[1]);
+    return sendMessage(request, env, user, messages[1], ctx);
   }
 
   const conversationMedia = routeMatch(pathname, /^\/api\/conversations\/([^/]+)\/media$/);
   if (conversationMedia && method === "POST") {
     requirePermission(user, "chat");
-    return sendMediaMessage(request, env, user, conversationMedia[1]);
+    return sendMediaMessage(request, env, user, conversationMedia[1], ctx);
   }
 
   const conversationRead = routeMatch(pathname, /^\/api\/conversations\/([^/]+)\/read$/);
@@ -210,9 +215,9 @@ async function routeApi(request: Request, env: AppEnv): Promise<Response> {
 }
 
 export default {
-  async fetch(request, env): Promise<Response> {
+  async fetch(request, env, ctx): Promise<Response> {
     try {
-      return await routeApi(request, env);
+      return await routeApi(request, env, ctx);
     } catch (reason) {
       if (reason instanceof HttpError) return error(reason.message, reason.status);
       console.error(JSON.stringify({ event: "request.failed", path: new URL(request.url).pathname, reason }));

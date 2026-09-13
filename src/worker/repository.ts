@@ -2,6 +2,7 @@ import { HttpError, cleanText, json, normalizePhone, readJson } from "./http";
 import type { AppEnv, SessionUser } from "./types";
 import { fetchContactProfilePicture, sendMedia, sendText } from "./zapi";
 import { INBOX_ROOM } from "./realtime";
+import { scheduleHumanConversationMemory } from "./luna-passive";
 
 type Classification = "hot" | "warm" | "cold";
 export type ServiceStatus = "new" | "in_progress" | "waiting_customer" | "resolved";
@@ -197,7 +198,8 @@ export async function updateConversationStatus(request: Request, env: AppEnv, us
   return json({ ok: true, status });
 }
 
-export async function sendMessage(request: Request, env: AppEnv, user: SessionUser, conversationId: string): Promise<Response> {
+export async function sendMessage(request: Request, env: AppEnv, user: SessionUser, conversationId: string,
+  ctx?: ExecutionContext): Promise<Response> {
   const input = await readJson<{ body?: unknown }>(request);
   const body = cleanText(input.body, 10_000, true)!;
   const conversation = await env.DB.prepare("SELECT ct.phone FROM conversations c JOIN contacts ct ON ct.id = c.contact_id WHERE c.id = ?1")
@@ -223,6 +225,8 @@ export async function sendMessage(request: Request, env: AppEnv, user: SessionUs
   await env.CHAT_ROOMS.getByName(conversationId).broadcast({ type: "message.new", message });
   await env.CHAT_ROOMS.getByName(INBOX_ROOM).broadcast({ type: "conversation.updated", conversationId });
   await audit(env, user, "message.send", "conversation", conversationId, { messageId: id, status });
+  if (status !== "failed") scheduleHumanConversationMemory(env, ctx, { id, conversationId, direction: "outbound", type: "text",
+    body, mediaKey: null, fileName: null, mime: null, createdAt });
   return json({ message }, { status: status === "failed" ? 502 : 201 });
 }
 
@@ -235,7 +239,8 @@ function base64(buffer: ArrayBuffer): string {
   return btoa(binary);
 }
 
-export async function sendMediaMessage(request: Request, env: AppEnv, user: SessionUser, conversationId: string): Promise<Response> {
+export async function sendMediaMessage(request: Request, env: AppEnv, user: SessionUser, conversationId: string,
+  ctx?: ExecutionContext): Promise<Response> {
   const form = await request.formData();
   const file = form.get("file");
   const kind = form.get("kind");
@@ -277,6 +282,8 @@ export async function sendMediaMessage(request: Request, env: AppEnv, user: Sess
   await env.CHAT_ROOMS.getByName(conversationId).broadcast({ type: "message.new", message });
   await env.CHAT_ROOMS.getByName(INBOX_ROOM).broadcast({ type: "conversation.updated", conversationId });
   await audit(env, user, "message.send", "conversation", conversationId, { messageId: id, type: kind, status });
+  if (status !== "failed") scheduleHumanConversationMemory(env, ctx, { id, conversationId, direction: "outbound", type: kind,
+    body: caption, mediaKey, fileName: safeName, mime: file.type || "application/octet-stream", createdAt });
   return json({ message }, { status: status === "failed" ? 502 : 201 });
 }
 
