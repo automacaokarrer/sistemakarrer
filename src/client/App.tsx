@@ -29,7 +29,7 @@ import {
 } from "lucide-react";
 import { FocusEvent, FormEvent, useCallback, useEffect, useRef, useState } from "react";
 import { api, formatTime, initials } from "./api";
-import type { AuthStatus, Classification, Contact, Conversation, LeadSummary, ManagedUser, Message, Permissions, ServiceStatus, User } from "./types";
+import type { AuthStatus, Classification, Contact, Conversation, ManagedUser, Message, Permissions, ServiceStatus, User } from "./types";
 
 type View = "chat" | "leads" | "clients" | "lead" | "settings";
 type ConversationFilter = "all" | "mine" | "unassigned" | "unread" | "hot";
@@ -179,7 +179,6 @@ function Dashboard({ user, googleDrive, onLogout }: { user: User; googleDrive: b
   const [view, setView] = useState<View>(firstView);
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [contacts, setContacts] = useState<Contact[]>([]);
-  const [summary, setSummary] = useState<LeadSummary>({ total: 0, hot: 0, warm: 0, cold: 0, averageFirstResponseMinutes: 0, daily: [] });
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [loading, setLoading] = useState(user.permissions.chat || user.permissions.leads);
   const conversationsLoaded = useRef(false);
@@ -204,14 +203,6 @@ function Dashboard({ user, googleDrive, onLogout }: { user: User; googleDrive: b
     const data = await api<{ contacts: Contact[] }>("/api/contacts");
     setContacts(data.contacts);
   }, []);
-
-  const loadSummary = useCallback(async () => {
-    setSummary(await api<LeadSummary>("/api/leads/summary"));
-  }, []);
-
-  const refreshLeads = useCallback(async () => {
-    await Promise.all([reloadConversations(), loadSummary()]);
-  }, [loadSummary, reloadConversations]);
 
   const refreshClients = useCallback(async () => {
     await Promise.all([loadContacts(), ...(user.permissions.chat || user.permissions.leads ? [reloadConversations()] : [])]);
@@ -297,9 +288,8 @@ function Dashboard({ user, googleDrive, onLogout }: { user: User; googleDrive: b
     return () => { window.clearInterval(timer); document.removeEventListener("visibilitychange", ping); };
   }, []);
   useEffect(() => {
-    if (view === "leads" || view === "lead") void loadSummary();
     if (view === "clients") void loadContacts();
-  }, [loadContacts, loadSummary, view]);
+  }, [loadContacts, view]);
   const selected = conversations.find((conversation) => conversation.id === selectedId) ?? null;
 
   useEffect(() => {
@@ -326,8 +316,8 @@ function Dashboard({ user, googleDrive, onLogout }: { user: User; googleDrive: b
       <main className="workspace">
         {loading ? <div className="page-loader"><LoaderCircle className="spin" /> Carregando atendimento...</div> : null}
         {view === "chat" && user.permissions.chat && <ChatPage currentUser={user} conversations={conversations} selected={selected} onSelect={setSelectedId} onOpenLead={() => setView("lead")} onRefresh={reloadConversations} />}
-        {view === "leads" && user.permissions.leads && <LeadsPage conversations={conversations} summary={summary} onOpen={(id) => { setSelectedId(id); setView("lead"); }} onRefresh={refreshLeads} />}
-        {view === "lead" && user.permissions.leads && <LeadDetail conversation={selected} onBack={() => setView("leads")} onChat={() => user.permissions.chat && setView("chat")} onRefresh={refreshLeads} />}
+        {view === "leads" && user.permissions.leads && <LeadsPage conversations={conversations} onOpen={(id) => { setSelectedId(id); setView("lead"); }} onRefresh={reloadConversations} />}
+        {view === "lead" && user.permissions.leads && <LeadDetail conversation={selected} onBack={() => setView("leads")} onChat={() => user.permissions.chat && setView("chat")} onRefresh={reloadConversations} />}
         {view === "clients" && user.permissions.clients && <ClientsPage contacts={contacts} googleDrive={googleDrive} onRefresh={refreshClients} />}
         {view === "settings" && user.role === "admin" && <SettingsPage currentUser={user} />}
       </main>
@@ -726,22 +716,32 @@ function MessageBubble({ message }: { message: Message }) {
   );
 }
 
-function LeadsPage({ conversations, summary, onOpen, onRefresh }: { conversations: Conversation[]; summary: LeadSummary; onOpen: (id: string) => void; onRefresh: () => Promise<void> }) {
+function LeadsPage({ conversations, onOpen, onRefresh }: { conversations: Conversation[]; onOpen: (id: string) => void; onRefresh: () => Promise<void> }) {
   const [filter, setFilter] = useState<"all" | Classification>("all");
   const [search, setSearch] = useState("");
   const [period, setPeriod] = useState<"7" | "30" | "90" | "all">("30");
   const [attendant, setAttendant] = useState("all");
   const [entryTime, setEntryTime] = useState<"all" | "morning" | "afternoon" | "evening">("all");
   const [entryTimeModal, setEntryTimeModal] = useState(false);
-  const attendants = Array.from(new Set(conversations.map((item) => item.assigneeName).filter((name): name is string => Boolean(name)))).sort((a, b) => a.localeCompare(b, "pt-BR"));
+  const attendantNames = new Map<string, string>();
+  for (const item of conversations) {
+    if (item.assigneeId && item.assigneeName) attendantNames.set(item.assigneeId, item.assigneeName);
+    if (item.firstResponderId && item.firstResponderName) attendantNames.set(item.firstResponderId, item.firstResponderName);
+  }
+  const attendants = [...attendantNames].sort((left, right) => left[1].localeCompare(right[1], "pt-BR"));
   const cutoff = period === "all" ? null : Date.now() - Number(period) * 24 * 60 * 60 * 1000;
   const entryTimeLabel = { all: "Todos os horários", morning: "Manhã · 06h às 12h", afternoon: "Tarde · 12h às 18h", evening: "Noite · 18h às 06h" }[entryTime];
-  const periodLeads = conversations.filter((item) => {
+  const periodConversations = conversations.filter((item) => {
     const createdAt = new Date(item.createdAt);
     const hour = createdAt.getHours();
     const matchesTime = entryTime === "all" || (entryTime === "morning" && hour >= 6 && hour < 12) || (entryTime === "afternoon" && hour >= 12 && hour < 18) || (entryTime === "evening" && (hour >= 18 || hour < 6));
-    return (!cutoff || createdAt.getTime() >= cutoff) && matchesTime && (attendant === "all" || (attendant === "unassigned" ? !item.assigneeName : item.assigneeName === attendant));
+    return (!cutoff || createdAt.getTime() >= cutoff) && matchesTime;
   });
+  const periodLeads = periodConversations.filter((item) => attendant === "all" || (attendant === "unassigned" ? !item.assigneeId : item.assigneeId === attendant));
+  const answered = periodConversations.filter((item) => typeof item.firstResponseMinutes === "number" && Number.isFinite(item.firstResponseMinutes) && item.firstResponseMinutes >= 0
+    && (attendant === "all" || (attendant === "unassigned" ? !item.assigneeId : item.firstResponderId === attendant)));
+  const averageResponse = answered.length ? answered.reduce((total, item) => total + item.firstResponseMinutes!, 0) / answered.length : null;
+  const responseValue = averageResponse === null ? "—" : averageResponse < 0.1 ? "< 0,1" : new Intl.NumberFormat("pt-BR", { maximumFractionDigits: 1 }).format(averageResponse);
   const normalizedSearch = search.trim().toLocaleLowerCase("pt-BR");
   const leads = periodLeads.filter((item) => (filter === "all" || item.classification === filter) && `${item.name} ${item.phone} ${item.stage} ${item.assigneeName ?? ""}`.toLocaleLowerCase("pt-BR").includes(normalizedSearch));
   const metrics = {
@@ -786,7 +786,7 @@ function LeadsPage({ conversations, summary, onOpen, onRefresh }: { conversation
         <div><h1>Leads</h1><p>Atualizado agora <span>{metrics.total} contatos</span></p></div>
         <div className="leads-actions">
           <label><span>Período</span><select aria-label="Período dos leads" value={period} onChange={(event) => setPeriod(event.target.value as typeof period)}><option value="7">Últimos 7 dias</option><option value="30">Últimos 30 dias</option><option value="90">Últimos 90 dias</option><option value="all">Todo o período</option></select><ChevronDown size={14} /></label>
-          <label><span>Atendente</span><select aria-label="Atendente responsável" value={attendant} onChange={(event) => setAttendant(event.target.value)}><option value="all">Todos os atendentes</option><option value="unassigned">Não atribuído</option>{attendants.map((name) => <option value={name} key={name}>{name}</option>)}</select><ChevronDown size={14} /></label>
+          <label><span>Atendente</span><select aria-label="Atendente responsável" value={attendant} onChange={(event) => setAttendant(event.target.value)}><option value="all">Todos os atendentes</option><option value="unassigned">Não atribuído</option>{attendants.map(([id, name]) => <option value={id} key={id}>{name}</option>)}</select><ChevronDown size={14} /></label>
           <button className="leads-export" onClick={exportReport} disabled={!leads.length} title={leads.length ? `Exportar ${leads.length} lead(s) filtrado(s)` : "Não há leads para exportar"}><Download size={15} /><span>Exportar relatório</span></button>
         </div>
       </header>
@@ -798,7 +798,7 @@ function LeadsPage({ conversations, summary, onOpen, onRefresh }: { conversation
       </div>
       <div className="leads-insights">
         <article className="lead-trend"><header><span>Novos por dia</span><button className="trend-filter" aria-haspopup="dialog" onClick={() => setEntryTimeModal(true)}>{entryTime === "all" ? "Filtrar por hora de entrada" : entryTimeLabel}<ChevronDown size={13} /></button></header><div className="lead-bars">{trendData.map((item) => <div key={item.key} title={`${item.label}: ${item.total} lead(s)`}><span>{item.total || ""}</span><i style={{ height: `${item.total ? Math.max(12, item.total / trendMax * 100) : 2}%` }} /><small>{item.label}</small></div>)}</div></article>
-        <article className="lead-distribution"><div className="lead-donut" style={{ background: `conic-gradient(#1f1f1f 0 ${metrics.total ? metrics.hot / metrics.total * 100 : 0}%, #e7ac2d 0 ${metrics.total ? (metrics.hot + metrics.warm) / metrics.total * 100 : 0}%, #f0d277 0 100%)` }}><span>{metrics.total}</span></div><div className="lead-legend"><p><i className="hot" />Quente <strong>{metrics.hot}</strong></p><p><i className="warm" />Morno <strong>{metrics.warm}</strong></p><p><i className="cold" />Frio <strong>{metrics.cold}</strong></p></div><div className="response-time"><span>Tempo médio da primeira resposta</span><strong>{summary.averageFirstResponseMinutes || 0}<small> min</small></strong></div></article>
+        <article className="lead-distribution"><div className="lead-donut" style={{ background: `conic-gradient(#1f1f1f 0 ${metrics.total ? metrics.hot / metrics.total * 100 : 0}%, #e7ac2d 0 ${metrics.total ? (metrics.hot + metrics.warm) / metrics.total * 100 : 0}%, #f0d277 0 100%)` }}><span>{metrics.total}</span></div><div className="lead-legend"><p><i className="hot" />Quente <strong>{metrics.hot}</strong></p><p><i className="warm" />Morno <strong>{metrics.warm}</strong></p><p><i className="cold" />Frio <strong>{metrics.cold}</strong></p></div><div className="response-time"><span title="Da primeira mensagem recebida até a primeira resposta enviada pelo CRM. A média por atendente considera quem enviou essa resposta, mesmo após uma transferência.">{attendant !== "all" && attendant !== "unassigned" ? `Primeira resposta de ${attendantNames.get(attendant) ?? "atendente"}` : "Tempo médio da primeira resposta"}</span><strong>{responseValue}{averageResponse !== null && <small> min</small>}</strong><small>{answered.length ? `${answered.length} ${answered.length === 1 ? "conversa respondida" : "conversas respondidas"}` : "Nenhuma resposta no período"}</small></div></article>
       </div>
       <div className="leads-table">
         <div className="table-toolbar"><div className="chips"><Chip active={filter === "all"} onClick={() => setFilter("all")}>Todos</Chip>{(["hot", "warm", "cold"] as Classification[]).map((value) => <Chip key={value} active={filter === value} onClick={() => setFilter(value)}>{classificationLabel[value]}s</Chip>)}</div><SearchBox value={search} onChange={setSearch} placeholder="Buscar lead" /></div>

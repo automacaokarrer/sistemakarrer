@@ -105,14 +105,15 @@ npm.cmd run test:e2e
 npm.cmd run build
 ```
 
-Último resultado registrado: 27 testes unitários e 18 cenários E2E aprovados em desktop e Pixel 7, incluindo recuperação de conversas e mensagens sem evento WebSocket e avisos para usuários somente de Leads; typecheck e build aprovados. Os casos E2E passaram em execuções sequenciais; neste ambiente o runner Playwright precisou ser interrompido após imprimir os resultados porque o servidor de desenvolvimento permaneceu aberto.
+Último resultado registrado: 28 testes unitários e 20 cenários E2E aprovados em desktop e Pixel 7, incluindo recuperação de conversas sem evento WebSocket e média da primeira resposta por atendente; typecheck e build aprovados. Neste ambiente o runner Playwright precisou ser interrompido após imprimir todos os resultados porque o servidor de desenvolvimento permaneceu aberto.
 
 ## Migrações e deploy
 
 - A migração `migrations/0004_user_profiles.sql` adiciona perfis, origem do cadastro, índice de presença e documentos dos clientes.
 - A migração `migrations/0005_contact_avatar_cache.sql` adiciona as referências e o controle de renovação do cache privado das fotos dos contatos.
 - A migração `migrations/0006_conversation_waiting.sql` adiciona tempo de espera, status operacional e índices de responsável/status.
-- Todas as migrações até `0006_conversation_waiting.sql` estão aplicadas no D1 remoto; a última conferência não encontrou pendências.
+- A migração `migrations/0007_first_response_index.sql` adiciona índice para localizar a primeira mensagem recebida e a primeira resposta por conversa sem varrer todo o histórico.
+- Todas as migrações até `0006_conversation_waiting.sql` estão aplicadas no D1 remoto; `0007_first_response_index.sql` deve ser aplicada antes de publicar o cálculo da média.
 
 ### Runbook de deploy no Cloudflare
 
@@ -229,4 +230,5 @@ Deploy e push são operações diferentes: o deploy publica os arquivos locais n
 - A correção passou por 27 testes unitários, typecheck e build. Os 16 casos E2E originais passaram em desktop e Pixel 7; o caso adicional de Leads com acesso exclusivo também passou nos dois perfis. O processo Playwright precisou ser interrompido após emitir os resultados porque o servidor de desenvolvimento não encerrou automaticamente neste ambiente.
 - Após autorização explícita do responsável em 13 de setembro de 2026, o commit `3da7d2c` foi enviado ao `main` institucional e publicado no Cloudflare na versão `5726bac7-e388-4771-8b68-4658a1009df0`. A conta Cloudflare e o destino foram conferidos; não havia migrações pendentes. A página pública e `/api/auth/status` responderam HTTP 200, e o webhook protegido recusou token inválido com HTTP 401. No Chromium, a página mostrou o título `Karrer | Atendimento`, a tela de login, o novo bundle e nenhum overflow horizontal. Próximo passo operacional: observar um novo evento real de presença fornecido pela Z-API para confirmar o indicador online de um contato, sem enviar mensagem de teste não solicitada.
 - Depois que o responsável informou que o indicador ainda mostrava o horário antigo, a investigação confirmou a divergência de token do callback de presença e a corrigiu na Z-API. O valor antigo de `last_seen_at` não muda retroativamente; aguardar um evento novo de presença do contato para validar o fluxo completo Z-API → Worker → D1 → WebSocket → interface. Não há novo deploy de código necessário para essa correção de configuração.
+- O cartão de Leads “Tempo médio da primeira resposta” devolvia `0` fixo pela API. O cálculo agora usa a primeira mensagem recebida e o primeiro envio bem-sucedido por usuário do CRM depois dela; envios falhos e mensagens originadas fora do CRM não entram. O tempo pertence ao usuário que respondeu, mesmo se a conversa for transferida depois. A interface calcula a média sobre o período e o filtro de atendente com os dados já carregados da lista, mostra quantidade de conversas respondidas e exibe `—` quando não há amostra. Em consulta agregada somente de leitura, o D1 de produção retornou uma conversa respondida com média de 5,1 minutos. A implementação passou por 28 testes unitários, 20 E2E, typecheck e build; ainda falta aplicar a migração e publicar.
 - Continua pendente configurar no Cloudflare os três secrets do Google Drive usando as credenciais da conta de serviço institucional da Karrer e repetir o deploy e o teste de upload.

@@ -21,6 +21,7 @@ async function mockDashboard(
     id: "conversation-1", contactId: "contact-1", createdAt: now, name: "Maria Oliveira", phone: "5592999999999",
     bank: "Banco Exemplo", stage: "Documentação", classification: "hot", score: 86, lastMessage: "Enviei os documentos",
     lastMessageType: "text", lastMessageAt: now, unreadCount: 2, online: false, lastSeenAt: now, waitingSince: now, serviceStatus: "new", assigneeId: "admin-1", assigneeName: "Ana Karrer", avatarUrl: "/karrer-logo.png",
+    firstResponseMinutes: 5.1, firstResponderId: "admin-1", firstResponderName: "Ana Karrer",
   }];
   const contacts = [{
     id: "contact-1", phone: "5592999999999", name: "Maria Oliveira", cpf: null, rg: null, rgIssuer: null,
@@ -146,6 +147,25 @@ test("painel principal abre todos os módulos autorizados", async ({ page }, tes
   await expect(page.getByText("As permissões só podem ser alteradas por você, administrador mestre.")).toBeVisible();
   await page.getByRole("button", { name: "Fechar" }).click();
   await expectNoHorizontalOverflow(page);
+});
+
+test("média da primeira resposta muda conforme o atendente", async ({ page }) => {
+  await mockDashboard(page, () => [{
+    id: "conversation-2", contactId: "contact-2", createdAt: now, name: "Contato de João", phone: "5592888888888",
+    bank: null, stage: "Primeiro contato", classification: "warm", score: 50, lastMessage: "Respondido",
+    lastMessageType: "text", lastMessageAt: now, unreadCount: 0, online: false, lastSeenAt: null,
+    waitingSince: null, serviceStatus: "in_progress", assigneeId: "user-2", assigneeName: "João Lima", avatarUrl: null,
+    firstResponseMinutes: 14.9, firstResponderId: "user-2", firstResponderName: "João Lima",
+  }]);
+  await page.goto("/");
+  await page.getByRole("button", { name: "Leads" }).click();
+  await expect(page.locator(".response-time strong")).toContainText("10 min");
+  await page.getByRole("combobox", { name: "Atendente responsável" }).selectOption("admin-1");
+  await expect(page.locator(".response-time strong")).toContainText("5,1 min");
+  await page.getByRole("combobox", { name: "Atendente responsável" }).selectOption("user-2");
+  await expect(page.locator(".response-time strong")).toContainText("14,9 min");
+  await page.getByRole("combobox", { name: "Atendente responsável" }).selectOption("unassigned");
+  await expect(page.locator(".response-time strong")).toHaveText("—");
 });
 
 test("nova conversa aparece em tempo real sem recarregar a página", async ({ page }) => {

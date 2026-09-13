@@ -54,6 +54,9 @@ export interface Conversation {
   avatarUrl: string;
   waitingSince: string | null;
   serviceStatus: ServiceStatus;
+  firstResponseMinutes: number | null;
+  firstResponderId: string | null;
+  firstResponderName: string | null;
 }
 
 export interface Message {
@@ -94,6 +97,6 @@ export interface LeadSummary {
   hot: number;
   warm: number;
   cold: number;
-  averageFirstResponseMinutes: number;
+  averageFirstResponseMinutes: number | null;
   daily: Array<{ day: string; total: number }>;
 }

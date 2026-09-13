@@ -27,6 +27,9 @@ interface ConversationRow {
   avatarUrl: string;
   waitingSince: string | null;
   serviceStatus: ServiceStatus;
+  firstResponseMinutes: number | null;
+  firstResponderId: string | null;
+  firstResponderName: string | null;
 }
 
 export interface MessageRow {
@@ -42,12 +45,22 @@ export interface MessageRow {
   createdAt: string;
 }
 
+const firstResponseJoins = `LEFT JOIN messages firstInbound ON firstInbound.id = (
+    SELECT id FROM messages WHERE conversation_id = c.id AND direction = 'inbound' ORDER BY created_at, id LIMIT 1)
+  LEFT JOIN messages firstReply ON firstReply.id = (
+    SELECT id FROM messages WHERE conversation_id = c.id AND direction = 'outbound'
+      AND sender_user_id IS NOT NULL AND status IN ('sent', 'delivered', 'read')
+      AND created_at > firstInbound.created_at ORDER BY created_at, id LIMIT 1)`;
+
 const conversationSelect = `SELECT c.id, c.contact_id AS contactId, c.created_at AS createdAt, COALESCE(ct.name, ct.phone) AS name,
   ct.phone, ct.bank, c.stage, c.classification, c.score, c.last_message_at AS lastMessageAt,
   c.unread_count AS unreadCount, c.online, c.last_seen_at AS lastSeenAt, c.waiting_since AS waitingSince, c.service_status AS serviceStatus, c.assignee_id AS assigneeId, u.name AS assigneeName,
+  ROUND((julianday(firstReply.created_at) - julianday(firstInbound.created_at)) * 1440, 2) AS firstResponseMinutes,
+  firstReply.sender_user_id AS firstResponderId, responder.name AS firstResponderName,
   (SELECT m.body FROM messages m WHERE m.conversation_id = c.id ORDER BY m.created_at DESC, m.id DESC LIMIT 1) AS lastMessage,
   (SELECT m.type FROM messages m WHERE m.conversation_id = c.id ORDER BY m.created_at DESC, m.id DESC LIMIT 1) AS lastMessageType
-  FROM conversations c JOIN contacts ct ON ct.id = c.contact_id LEFT JOIN users u ON u.id = c.assignee_id`;
+  FROM conversations c JOIN contacts ct ON ct.id = c.contact_id LEFT JOIN users u ON u.id = c.assignee_id
+  ${firstResponseJoins} LEFT JOIN users responder ON responder.id = firstReply.sender_user_id`;
 
 export const messageSelect = `SELECT id, conversation_id AS conversationId, direction, type, body,
   media_key AS mediaKey, file_name AS fileName, duration, status, created_at AS createdAt FROM messages`;
@@ -274,7 +287,9 @@ export async function leadSummary(env: AppEnv): Promise<Response> {
     .first<{ total: number; hot: number; warm: number; cold: number }>();
   const daily = await env.DB.prepare("SELECT substr(created_at, 1, 10) AS day, COUNT(*) AS total FROM conversations WHERE created_at >= datetime('now', '-30 days') GROUP BY day ORDER BY day")
     .all<{ day: string; total: number }>();
-  return json({ total: Number(counts?.total ?? 0), hot: Number(counts?.hot ?? 0), warm: Number(counts?.warm ?? 0), cold: Number(counts?.cold ?? 0), averageFirstResponseMinutes: 0, daily: daily.results });
+  const responseTime = await env.DB.prepare(`SELECT ROUND(AVG((julianday(firstReply.created_at) - julianday(firstInbound.created_at)) * 1440), 1) AS averageFirstResponseMinutes
+    FROM conversations c ${firstResponseJoins} WHERE firstReply.id IS NOT NULL`).first<{ averageFirstResponseMinutes: number | null }>();
+  return json({ total: Number(counts?.total ?? 0), hot: Number(counts?.hot ?? 0), warm: Number(counts?.warm ?? 0), cold: Number(counts?.cold ?? 0), averageFirstResponseMinutes: responseTime?.averageFirstResponseMinutes ?? null, daily: daily.results });
 }
 
 export async function updateClassification(request: Request, env: AppEnv, user: SessionUser, conversationId: string): Promise<Response> {
