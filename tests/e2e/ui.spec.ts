@@ -46,6 +46,11 @@ async function mockDashboard(
       body = { ok: true, id: "contact-1", profileComplete: contacts[0].profileComplete };
     }
     else if (path === "/api/leads/summary") body = { total: 1, hot: 1, warm: 0, cold: 0, averageFirstResponseMinutes: 4, daily: [] };
+    else if (path === "/api/leads/attendants") body = { attendants: [
+      { id: "admin-1", name: "Ana Karrer", avatarUrl: "/karrer-logo.png" },
+      { id: "user-2", name: "João Lima", avatarUrl: null },
+      { id: "user-3", name: "Lia Costa", avatarUrl: null },
+    ] };
     else if (path === "/api/settings/users") body = { users };
     else if (/\/api\/conversations\/[^/]+\/read$/.test(path) && route.request().method() === "POST") {
       const conversationId = path.split("/").at(-2)!;
@@ -160,6 +165,15 @@ test("média da primeira resposta muda conforme o atendente", async ({ page }) =
   await page.goto("/");
   await page.getByRole("button", { name: "Leads" }).click();
   await expect(page.locator(".response-time strong")).toContainText("10 min");
+  const team = page.getByRole("region", { name: "Tempo médio por atendente" });
+  await expect(team.locator(".attendant-response-person")).toHaveCount(3);
+  await expect(team.getByText("Ana Karrer")).toBeVisible();
+  await expect(team.getByText("João Lima")).toBeVisible();
+  await expect(team.getByText("Lia Costa")).toBeVisible();
+  await expect(team.locator(".attendant-response-person").filter({ hasText: "Ana Karrer" })).toContainText("5,1 min");
+  await expect(team.locator(".attendant-response-person").filter({ hasText: "João Lima" })).toContainText("14,9 min");
+  await expect(team.locator(".attendant-response-person").filter({ hasText: "Lia Costa" })).toContainText("Nenhuma resposta no período");
+  await expect(team.locator(".attendant-response-person").filter({ hasText: "Ana Karrer" }).getByRole("img", { name: "Foto de Ana Karrer" })).toBeVisible();
   await page.getByRole("combobox", { name: "Atendente responsável" }).selectOption("admin-1");
   await expect(page.locator(".response-time strong")).toContainText("5,1 min");
   await page.getByRole("combobox", { name: "Atendente responsável" }).selectOption("user-2");

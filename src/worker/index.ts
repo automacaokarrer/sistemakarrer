@@ -21,7 +21,7 @@ import {
 } from "./repository";
 import type { AppEnv } from "./types";
 import { handleZApiWebhook } from "./webhook";
-import { createUser, deleteUser, getUserAvatar, listUsers, registerUser, sendPasswordReset, updateUserAccess } from "./settings";
+import { createUser, deleteUser, getUserAvatar, listLeadAttendants, listUsers, registerUser, sendPasswordReset, updateUserAccess } from "./settings";
 import { uploadContactDocuments } from "./drive";
 import { INBOX_ROOM } from "./realtime";
 
@@ -87,6 +87,10 @@ async function routeApi(request: Request, env: AppEnv): Promise<Response> {
   if (method === "GET" && pathname === "/api/leads/summary") {
     requirePermission(user, "leads");
     return leadSummary(env);
+  }
+  if (method === "GET" && pathname === "/api/leads/attendants") {
+    requirePermission(user, "leads");
+    return listLeadAttendants(env);
   }
   if (method === "GET" && pathname === "/api/contacts") {
     requirePermission(user, "clients");
@@ -188,7 +192,7 @@ async function routeApi(request: Request, env: AppEnv): Promise<Response> {
   }
   const userAvatar = routeMatch(pathname, /^\/api\/settings\/users\/([^/]+)\/avatar$/);
   if (method === "GET" && userAvatar) {
-    requireAdmin(user);
+    requireAnyPermission(user, ["leads", "settings"]);
     return getUserAvatar(env, userAvatar[1]);
   }
   const userReset = routeMatch(pathname, /^\/api\/settings\/users\/([^/]+)\/send-password-reset$/);

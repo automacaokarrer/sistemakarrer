@@ -73,6 +73,15 @@ export async function listUsers(env: AppEnv): Promise<Response> {
   return json({ users: result.results.map(managedUser) });
 }
 
+export async function listLeadAttendants(env: AppEnv): Promise<Response> {
+  const result = await env.DB.prepare("SELECT id, name, avatar_key AS avatarKey FROM users ORDER BY name COLLATE NOCASE").all<{ id: string; name: string; avatarKey: string | null }>();
+  return json({ attendants: result.results.map((row) => ({
+    id: row.id,
+    name: row.name,
+    avatarUrl: row.avatarKey ? `/api/settings/users/${row.id}/avatar` : null,
+  })) });
+}
+
 function normalizedInstagram(value: unknown): string {
   let profile = cleanText(value, 160, true)!;
   profile = profile.replace(/^https?:\/\/(?:www\.)?instagram\.com\//i, "").replace(/^@/, "").split(/[/?#]/)[0];

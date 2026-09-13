@@ -84,17 +84,18 @@ export async function listConversations(env: AppEnv, url: URL): Promise<Response
   const search = (url.searchParams.get("search") ?? "").trim();
   const kind = url.searchParams.get("classification");
   const bindings: Array<string | number> = [];
-  let query = `${conversationSelect} WHERE 1 = 1`;
+  let selected = "SELECT c.id FROM conversations c JOIN contacts ct ON ct.id = c.contact_id WHERE 1 = 1";
   if (search) {
-    query += " AND (ct.name LIKE ? OR ct.phone LIKE ?)";
+    selected += " AND (ct.name LIKE ? OR ct.phone LIKE ?)";
     bindings.push(`%${search}%`, `%${search}%`);
   }
   if (kind) {
-    query += " AND c.classification = ?";
+    selected += " AND c.classification = ?";
     bindings.push(classification(kind));
   }
-  if (url.searchParams.get("unread") === "true") query += " AND c.unread_count > 0";
-  query += " ORDER BY COALESCE(c.last_message_at, c.created_at) DESC LIMIT 200";
+  if (url.searchParams.get("unread") === "true") selected += " AND c.unread_count > 0";
+  selected += " ORDER BY COALESCE(c.last_message_at, c.created_at) DESC LIMIT 200";
+  const query = `${conversationSelect} WHERE c.id IN (${selected}) ORDER BY COALESCE(c.last_message_at, c.created_at) DESC`;
   const prepared = env.DB.prepare(query);
   const result = await (bindings.length ? prepared.bind(...bindings) : prepared).all<ConversationRow>();
   return json({ conversations: result.results.map((row) => ({ ...row, name: row.name ?? row.phone, online: Boolean(row.online), avatarUrl: `/api/contacts/${row.contactId}/avatar` })) });

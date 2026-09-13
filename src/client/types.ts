@@ -27,6 +27,12 @@ export interface ManagedUser extends User {
   createdAt: string;
 }
 
+export interface LeadAttendant {
+  id: string;
+  name: string;
+  avatarUrl: string | null;
+}
+
 export interface AuthStatus {
   setupRequired: boolean;
   user: User | null;

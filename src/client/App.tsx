@@ -29,7 +29,7 @@ import {
 } from "lucide-react";
 import { FocusEvent, FormEvent, useCallback, useEffect, useRef, useState } from "react";
 import { api, formatTime, initials } from "./api";
-import type { AuthStatus, Classification, Contact, Conversation, ManagedUser, Message, Permissions, ServiceStatus, User } from "./types";
+import type { AuthStatus, Classification, Contact, Conversation, LeadAttendant, ManagedUser, Message, Permissions, ServiceStatus, User } from "./types";
 
 type View = "chat" | "leads" | "clients" | "lead" | "settings";
 type ConversationFilter = "all" | "mine" | "unassigned" | "unread" | "hot";
@@ -723,7 +723,16 @@ function LeadsPage({ conversations, onOpen, onRefresh }: { conversations: Conver
   const [attendant, setAttendant] = useState("all");
   const [entryTime, setEntryTime] = useState<"all" | "morning" | "afternoon" | "evening">("all");
   const [entryTimeModal, setEntryTimeModal] = useState(false);
+  const [team, setTeam] = useState<LeadAttendant[]>([]);
+  useEffect(() => {
+    let active = true;
+    void api<{ attendants: LeadAttendant[] }>("/api/leads/attendants")
+      .then((data) => { if (active) setTeam(data.attendants); })
+      .catch(() => undefined);
+    return () => { active = false; };
+  }, []);
   const attendantNames = new Map<string, string>();
+  for (const person of team) attendantNames.set(person.id, person.name);
   for (const item of conversations) {
     if (item.assigneeId && item.assigneeName) attendantNames.set(item.assigneeId, item.assigneeName);
     if (item.firstResponderId && item.firstResponderName) attendantNames.set(item.firstResponderId, item.firstResponderName);
@@ -741,7 +750,14 @@ function LeadsPage({ conversations, onOpen, onRefresh }: { conversations: Conver
   const answered = periodConversations.filter((item) => typeof item.firstResponseMinutes === "number" && Number.isFinite(item.firstResponseMinutes) && item.firstResponseMinutes >= 0
     && (attendant === "all" || (attendant === "unassigned" ? !item.assigneeId : item.firstResponderId === attendant)));
   const averageResponse = answered.length ? answered.reduce((total, item) => total + item.firstResponseMinutes!, 0) / answered.length : null;
+  const formatResponse = (minutes: number | null) => minutes === null ? "—" : minutes < 0.1 ? "< 0,1 min" : `${new Intl.NumberFormat("pt-BR", { maximumFractionDigits: 1 }).format(minutes)} min`;
   const responseValue = averageResponse === null ? "—" : averageResponse < 0.1 ? "< 0,1" : new Intl.NumberFormat("pt-BR", { maximumFractionDigits: 1 }).format(averageResponse);
+  const teamById = new Map(team.map((person) => [person.id, person]));
+  const responseByAttendant = attendants.map(([id, name]) => {
+    const replies = periodConversations.filter((item) => item.firstResponderId === id && typeof item.firstResponseMinutes === "number" && Number.isFinite(item.firstResponseMinutes) && item.firstResponseMinutes >= 0);
+    const average = replies.length ? replies.reduce((total, item) => total + item.firstResponseMinutes!, 0) / replies.length : null;
+    return { id, name, avatarUrl: teamById.get(id)?.avatarUrl ?? null, average, count: replies.length };
+  });
   const normalizedSearch = search.trim().toLocaleLowerCase("pt-BR");
   const leads = periodLeads.filter((item) => (filter === "all" || item.classification === filter) && `${item.name} ${item.phone} ${item.stage} ${item.assigneeName ?? ""}`.toLocaleLowerCase("pt-BR").includes(normalizedSearch));
   const metrics = {
@@ -800,6 +816,15 @@ function LeadsPage({ conversations, onOpen, onRefresh }: { conversations: Conver
         <article className="lead-trend"><header><span>Novos por dia</span><button className="trend-filter" aria-haspopup="dialog" onClick={() => setEntryTimeModal(true)}>{entryTime === "all" ? "Filtrar por hora de entrada" : entryTimeLabel}<ChevronDown size={13} /></button></header><div className="lead-bars">{trendData.map((item) => <div key={item.key} title={`${item.label}: ${item.total} lead(s)`}><span>{item.total || ""}</span><i style={{ height: `${item.total ? Math.max(12, item.total / trendMax * 100) : 2}%` }} /><small>{item.label}</small></div>)}</div></article>
         <article className="lead-distribution"><div className="lead-donut" style={{ background: `conic-gradient(#1f1f1f 0 ${metrics.total ? metrics.hot / metrics.total * 100 : 0}%, #e7ac2d 0 ${metrics.total ? (metrics.hot + metrics.warm) / metrics.total * 100 : 0}%, #f0d277 0 100%)` }}><span>{metrics.total}</span></div><div className="lead-legend"><p><i className="hot" />Quente <strong>{metrics.hot}</strong></p><p><i className="warm" />Morno <strong>{metrics.warm}</strong></p><p><i className="cold" />Frio <strong>{metrics.cold}</strong></p></div><div className="response-time"><span title="Da primeira mensagem recebida até a primeira resposta enviada pelo CRM. A média por atendente considera quem enviou essa resposta, mesmo após uma transferência.">{attendant !== "all" && attendant !== "unassigned" ? `Primeira resposta de ${attendantNames.get(attendant) ?? "atendente"}` : "Tempo médio da primeira resposta"}</span><strong>{responseValue}{averageResponse !== null && <small> min</small>}</strong><small>{answered.length ? `${answered.length} ${answered.length === 1 ? "conversa respondida" : "conversas respondidas"}` : "Nenhuma resposta no período"}</small></div></article>
       </div>
+      <section className="attendant-response" aria-label="Tempo médio por atendente">
+        <header><div><h2>Primeira resposta por atendente</h2><p>Quem respondeu ao lead · {period === "all" ? "todo o período" : `últimos ${period} dias`}</p></div><small>{responseByAttendant.length} {responseByAttendant.length === 1 ? "usuário" : "usuários"}</small></header>
+        <div className="attendant-response-list">{responseByAttendant.map((person) => <div className={`attendant-response-person ${attendant === person.id ? "selected" : ""}`} key={person.id}>
+          <Avatar name={person.name} imageUrl={person.avatarUrl} size="sm" />
+          <span><strong>{person.name}</strong><small>{person.count ? `${person.count} ${person.count === 1 ? "conversa respondida" : "conversas respondidas"}` : "Nenhuma resposta no período"}</small></span>
+          <b>{formatResponse(person.average)}</b>
+        </div>)}</div>
+        {!responseByAttendant.length && <p className="attendant-response-empty">Nenhum usuário cadastrado.</p>}
+      </section>
       <div className="leads-table">
         <div className="table-toolbar"><div className="chips"><Chip active={filter === "all"} onClick={() => setFilter("all")}>Todos</Chip>{(["hot", "warm", "cold"] as Classification[]).map((value) => <Chip key={value} active={filter === value} onClick={() => setFilter(value)}>{classificationLabel[value]}s</Chip>)}</div><SearchBox value={search} onChange={setSearch} placeholder="Buscar lead" /></div>
         <div className="lead-row lead-head"><span>Nome</span><span>Telefone</span><span>Classificação</span><span>Etapa</span><span>Último contato</span><span>Responsável</span><span /></div>
