@@ -21,8 +21,8 @@ Este arquivo registra decisões, estado de produção e procedimentos importante
 - D1: `karrer-atendimento-db`.
 - R2: `karrer-atendimento-media`.
 - Durable Object: `ChatRoom`.
-- Última versão Cloudflare validada nesta data: `5726bac7-e388-4771-8b68-4658a1009df0`.
-- Commit de código correspondente: `3da7d2c`.
+- Última versão Cloudflare validada nesta data: `284a5cf8-ac13-4aed-9e01-792bdb45c183`.
+- Commit de código correspondente: `50d43db`.
 - O endpoint protegido do webhook Z-API respondeu corretamente após o deploy.
 
 ## Funcionalidades implementadas
@@ -113,7 +113,7 @@ npm.cmd run build
 - A migração `migrations/0005_contact_avatar_cache.sql` adiciona as referências e o controle de renovação do cache privado das fotos dos contatos.
 - A migração `migrations/0006_conversation_waiting.sql` adiciona tempo de espera, status operacional e índices de responsável/status.
 - A migração `migrations/0007_first_response_index.sql` adiciona índice para localizar a primeira mensagem recebida e a primeira resposta por conversa sem varrer todo o histórico.
-- Todas as migrações até `0006_conversation_waiting.sql` estão aplicadas no D1 remoto; `0007_first_response_index.sql` deve ser aplicada antes de publicar o cálculo da média.
+- Todas as migrações até `0007_first_response_index.sql` estão aplicadas no D1 remoto; a lista remota não mostrou migrações pendentes após o deploy.
 
 ### Runbook de deploy no Cloudflare
 
@@ -230,5 +230,5 @@ Deploy e push são operações diferentes: o deploy publica os arquivos locais n
 - A correção passou por 27 testes unitários, typecheck e build. Os 16 casos E2E originais passaram em desktop e Pixel 7; o caso adicional de Leads com acesso exclusivo também passou nos dois perfis. O processo Playwright precisou ser interrompido após emitir os resultados porque o servidor de desenvolvimento não encerrou automaticamente neste ambiente.
 - Após autorização explícita do responsável em 13 de setembro de 2026, o commit `3da7d2c` foi enviado ao `main` institucional e publicado no Cloudflare na versão `5726bac7-e388-4771-8b68-4658a1009df0`. A conta Cloudflare e o destino foram conferidos; não havia migrações pendentes. A página pública e `/api/auth/status` responderam HTTP 200, e o webhook protegido recusou token inválido com HTTP 401. No Chromium, a página mostrou o título `Karrer | Atendimento`, a tela de login, o novo bundle e nenhum overflow horizontal. Próximo passo operacional: observar um novo evento real de presença fornecido pela Z-API para confirmar o indicador online de um contato, sem enviar mensagem de teste não solicitada.
 - Depois que o responsável informou que o indicador ainda mostrava o horário antigo, a investigação confirmou a divergência de token do callback de presença e a corrigiu na Z-API. O valor antigo de `last_seen_at` não muda retroativamente; aguardar um evento novo de presença do contato para validar o fluxo completo Z-API → Worker → D1 → WebSocket → interface. Não há novo deploy de código necessário para essa correção de configuração.
-- O cartão de Leads “Tempo médio da primeira resposta” devolvia `0` fixo pela API. O cálculo agora usa a primeira mensagem recebida e o primeiro envio bem-sucedido por usuário do CRM depois dela; envios falhos e mensagens originadas fora do CRM não entram. O tempo pertence ao usuário que respondeu, mesmo se a conversa for transferida depois. A interface calcula a média sobre o período e o filtro de atendente com os dados já carregados da lista, mostra quantidade de conversas respondidas e exibe `—` quando não há amostra. Em consulta agregada somente de leitura, o D1 de produção retornou uma conversa respondida com média de 5,1 minutos. A implementação passou por 28 testes unitários, 20 E2E, typecheck e build; ainda falta aplicar a migração e publicar.
+- O cartão de Leads “Tempo médio da primeira resposta” devolvia `0` fixo pela API. O cálculo agora usa a primeira mensagem recebida e o primeiro envio bem-sucedido por usuário do CRM depois dela; envios falhos e mensagens originadas fora do CRM não entram. O tempo pertence ao usuário que respondeu, mesmo se a conversa for transferida depois. A interface calcula a média sobre o período e o filtro de atendente com os dados já carregados da lista, mostra quantidade de conversas respondidas e exibe `—` quando não há amostra. Em consulta agregada somente de leitura, o D1 de produção retornou uma conversa respondida com média de 5,1 minutos. A implementação passou por 28 testes unitários, 20 E2E, typecheck e build. A migração `0007` foi aplicada, o commit `50d43db` foi enviado ao `main` institucional e o Worker foi publicado na versão `284a5cf8-ac13-4aed-9e01-792bdb45c183`. A página pública e `/api/auth/status` responderam HTTP 200, e o HTML servido referencia o novo bundle `index-LLP44SkJ.js`. Não havia sessão autenticada disponível para observar o cartão com dados reais no navegador.
 - Continua pendente configurar no Cloudflare os três secrets do Google Drive usando as credenciais da conta de serviço institucional da Karrer e repetir o deploy e o teste de upload.
