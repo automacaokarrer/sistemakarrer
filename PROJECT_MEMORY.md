@@ -21,8 +21,8 @@ Este arquivo registra decisões, estado de produção e procedimentos importante
 - D1: `karrer-atendimento-db`.
 - R2: `karrer-atendimento-media`.
 - Durable Object: `ChatRoom`.
-- Última versão Cloudflare validada nesta data: `dbda570a-3331-471f-aa36-8fd14de4471c`.
-- Commit de código correspondente: `ea379da`.
+- Última versão Cloudflare validada nesta data: `5726bac7-e388-4771-8b68-4658a1009df0`.
+- Commit de código correspondente: `3da7d2c`.
 - O endpoint protegido do webhook Z-API respondeu corretamente após o deploy.
 
 ## Funcionalidades implementadas
@@ -104,7 +104,7 @@ npm.cmd run test:e2e
 npm.cmd run build
 ```
 
-Último resultado registrado: 25 testes unitários (incluindo persistência SQL da edição de clientes) e 14 testes E2E aprovados em desktop e Pixel 7, incluindo edição da ficha, tempo real, paginação de 40 mensagens, prévias de imagem/áudio, escrita simultânea, confirmação de leitura, filas do chat, tempo de espera, direcionamento e status operacional; typecheck e build aprovados.
+Último resultado registrado: 27 testes unitários e 18 cenários E2E aprovados em desktop e Pixel 7, incluindo recuperação de conversas e mensagens sem evento WebSocket e avisos para usuários somente de Leads; typecheck e build aprovados. Os casos E2E passaram em execuções sequenciais; neste ambiente o runner Playwright precisou ser interrompido após imprimir os resultados porque o servidor de desenvolvimento permaneceu aberto.
 
 ## Migrações e deploy
 
@@ -226,5 +226,5 @@ Deploy e push são operações diferentes: o deploy publica os arquivos locais n
 - Em 13 de setembro de 2026, foi constatado que o chat dependia apenas dos eventos WebSocket para atualizar conversas e mensagens, sem recuperação quando um evento era perdido. A interface agora sincroniza a lista e as 40 mensagens mais recentes ao voltar para a aba e após reconectar, sem descartar o histórico já carregado. A cada 30 segundos, consulta apenas enquanto o WebSocket correspondente não está aberto; conexões saudáveis usam eventos e um ping/pong para detectar falhas silenciosas. Usuários com acesso somente a Leads também recebem avisos pelo WebSocket global e não consultam periodicamente com a conexão saudável. A presença recebida pela Z-API agora associa números móveis brasileiros com ou sem nono dígito e trata `PAUSED` como fim da digitação, sem marcar o contato offline.
 - A instância institucional Z-API foi consultada somente para leitura: estava conectada, com callback de presença configurado para o CRM. O D1 remoto tinha duas conversas, nenhuma marcada online e o maior `last_seen_at` era `2026-09-12T18:00:50.000Z`; assim, o horário antigo exibido refletia o dado salvo. Presença de contatos depende de eventos efetivamente emitidos pela Z-API e das configurações de privacidade do WhatsApp; não há endpoint de consulta instantânea de presença documentado na integração atual.
 - A correção passou por 27 testes unitários, typecheck e build. Os 16 casos E2E originais passaram em desktop e Pixel 7; o caso adicional de Leads com acesso exclusivo também passou nos dois perfis. O processo Playwright precisou ser interrompido após emitir os resultados porque o servidor de desenvolvimento não encerrou automaticamente neste ambiente.
-- O código desta correção está somente em commit local. O push para `main` foi recusado pela revisão automática porque o pedido de verificação não autorizou explicitamente a publicação no repositório compartilhado. O deploy também não foi iniciado. Próximo passo: obter autorização explícita do responsável para push e deploy, depois registrar os IDs finais e validar a produção. Enquanto isso, a página pública e `/api/auth/status` continuaram respondendo HTTP 200 na versão anterior.
+- Após autorização explícita do responsável em 13 de setembro de 2026, o commit `3da7d2c` foi enviado ao `main` institucional e publicado no Cloudflare na versão `5726bac7-e388-4771-8b68-4658a1009df0`. A conta Cloudflare e o destino foram conferidos; não havia migrações pendentes. A página pública e `/api/auth/status` responderam HTTP 200, e o webhook protegido recusou token inválido com HTTP 401. No Chromium, a página mostrou o título `Karrer | Atendimento`, a tela de login, o novo bundle e nenhum overflow horizontal. Próximo passo operacional: observar um novo evento real de presença fornecido pela Z-API para confirmar o indicador online de um contato, sem enviar mensagem de teste não solicitada.
 - Continua pendente configurar no Cloudflare os três secrets do Google Drive usando as credenciais da conta de serviço institucional da Karrer e repetir o deploy e o teste de upload.
