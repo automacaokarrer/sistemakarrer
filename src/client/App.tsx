@@ -182,14 +182,20 @@ function Dashboard({ user, googleDrive, onLogout }: { user: User; googleDrive: b
   const [summary, setSummary] = useState<LeadSummary>({ total: 0, hot: 0, warm: 0, cold: 0, averageFirstResponseMinutes: 0, daily: [] });
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [loading, setLoading] = useState(user.permissions.chat || user.permissions.leads);
+  const conversationsLoaded = useRef(false);
+  const reloadSequence = useRef(0);
 
   const reloadConversations = useCallback(async () => {
-    setLoading(true);
+    const sequence = ++reloadSequence.current;
+    if (!conversationsLoaded.current) setLoading(true);
     try {
       const conversationData = await api<{ conversations: Conversation[] }>("/api/conversations");
-      setConversations(conversationData.conversations);
-      setSelectedId((current) => current && conversationData.conversations.some((conversation) => conversation.id === current) ? current : null);
+      if (sequence === reloadSequence.current) {
+        setConversations(conversationData.conversations);
+        setSelectedId((current) => current && conversationData.conversations.some((conversation) => conversation.id === current) ? current : null);
+      }
     } finally {
+      conversationsLoaded.current = true;
       setLoading(false);
     }
   }, []);
@@ -211,34 +217,48 @@ function Dashboard({ user, googleDrive, onLogout }: { user: User; googleDrive: b
     await Promise.all([loadContacts(), ...(user.permissions.chat || user.permissions.leads ? [reloadConversations()] : [])]);
   }, [loadContacts, reloadConversations, user.permissions.chat, user.permissions.leads]);
 
-  useEffect(() => { if (user.permissions.chat || user.permissions.leads) void reloadConversations(); }, [reloadConversations, user.permissions.chat, user.permissions.leads]);
   useEffect(() => {
-    if (!user.permissions.chat) return;
+    if (!user.permissions.chat && !user.permissions.leads) return;
+    const refresh = () => { if (document.visibilityState === "visible") void reloadConversations().catch(() => undefined); };
+    refresh();
+    document.addEventListener("visibilitychange", refresh);
+    return () => document.removeEventListener("visibilitychange", refresh);
+  }, [reloadConversations, user.permissions.chat, user.permissions.leads]);
+  useEffect(() => {
+    if (!user.permissions.chat && !user.permissions.leads) return;
     let socket: WebSocket | null = null;
     let reconnectTimer: number | null = null;
     let heartbeatTimer: number | null = null;
+    let fallbackTimer: number | null = null;
     let refreshTimer: number | null = null;
+    let awaitingPong = false;
     let stopped = false;
 
     const clearHeartbeat = () => {
       if (heartbeatTimer !== null) window.clearInterval(heartbeatTimer);
       heartbeatTimer = null;
+      awaitingPong = false;
     };
     const scheduleRefresh = () => {
       if (refreshTimer !== null) window.clearTimeout(refreshTimer);
-      refreshTimer = window.setTimeout(() => void reloadConversations(), 100);
+      refreshTimer = window.setTimeout(() => void reloadConversations().catch(() => undefined), 100);
     };
     const connect = () => {
       if (stopped || socket?.readyState === WebSocket.OPEN || socket?.readyState === WebSocket.CONNECTING) return;
       const protocol = location.protocol === "https:" ? "wss:" : "ws:";
       socket = new WebSocket(`${protocol}//${location.host}/api/conversations/ws`);
       socket.onopen = () => {
+        void reloadConversations().catch(() => undefined);
         clearHeartbeat();
         heartbeatTimer = window.setInterval(() => {
-          if (socket?.readyState === WebSocket.OPEN) socket.send("ping");
+          if (socket?.readyState !== WebSocket.OPEN) return;
+          if (awaitingPong) { socket.close(4000, "heartbeat timeout"); return; }
+          awaitingPong = true;
+          socket.send("ping");
         }, 25_000);
       };
       socket.onmessage = (event) => {
+        if (event.data === "pong") { awaitingPong = false; return; }
         try {
           const data = JSON.parse(event.data) as { type?: string };
           if (data.type === "conversation.updated") scheduleRefresh();
@@ -255,16 +275,20 @@ function Dashboard({ user, googleDrive, onLogout }: { user: User; googleDrive: b
       if (document.visibilityState === "visible") connect();
     };
     connect();
+    fallbackTimer = window.setInterval(() => {
+      if (document.visibilityState === "visible" && socket?.readyState !== WebSocket.OPEN) void reloadConversations().catch(() => undefined);
+    }, 30_000);
     document.addEventListener("visibilitychange", reconnectWhenVisible);
     return () => {
       stopped = true;
       document.removeEventListener("visibilitychange", reconnectWhenVisible);
       if (reconnectTimer !== null) window.clearTimeout(reconnectTimer);
+      if (fallbackTimer !== null) window.clearInterval(fallbackTimer);
       if (refreshTimer !== null) window.clearTimeout(refreshTimer);
       clearHeartbeat();
       socket?.close(1000, "dashboard closed");
     };
-  }, [reloadConversations, user.permissions.chat]);
+  }, [reloadConversations, user.permissions.chat, user.permissions.leads]);
   useEffect(() => {
     const ping = () => { if (document.visibilityState === "visible") void api("/api/auth/presence", { method: "POST" }).catch(() => undefined); };
     ping();
@@ -484,7 +508,23 @@ function ConversationPanel({ conversation, attendants, canAssign, assigning, upd
     }
   }, [conversation.id, hasMore, nextCursor]);
 
+  const syncRecentMessages = useCallback(async () => {
+    if (document.visibilityState !== "visible") return;
+    const data = await api<{ messages: Message[] }>(`/api/conversations/${conversation.id}/messages?limit=40`);
+    setMessages((current) => {
+      const byId = new Map(current.map((message) => [message.id, message]));
+      for (const message of data.messages) byId.set(message.id, message);
+      return [...byId.values()].sort((left, right) =>
+        left.createdAt.localeCompare(right.createdAt) || left.id.localeCompare(right.id));
+    });
+  }, [conversation.id]);
+
   useEffect(() => void loadMessages(), [loadMessages]);
+  useEffect(() => {
+    const refresh = () => void syncRecentMessages().catch(() => undefined);
+    document.addEventListener("visibilitychange", refresh);
+    return () => document.removeEventListener("visibilitychange", refresh);
+  }, [syncRecentMessages]);
   useEffect(() => () => {
     const recorder = recorderRef.current;
     if (recorder && recorder.state !== "inactive") {
@@ -498,23 +538,31 @@ function ConversationPanel({ conversation, attendants, canAssign, assigning, upd
     let socket: WebSocket | null = null;
     let reconnectTimer: number | null = null;
     let heartbeatTimer: number | null = null;
+    let fallbackTimer: number | null = null;
+    let awaitingPong = false;
     let stopped = false;
 
     const clearHeartbeat = () => {
       if (heartbeatTimer !== null) window.clearInterval(heartbeatTimer);
       heartbeatTimer = null;
+      awaitingPong = false;
     };
     const connect = () => {
       if (stopped || socket?.readyState === WebSocket.OPEN || socket?.readyState === WebSocket.CONNECTING) return;
       const protocol = location.protocol === "https:" ? "wss:" : "ws:";
       socket = new WebSocket(`${protocol}//${location.host}/api/conversations/${conversation.id}/ws`);
       socket.onopen = () => {
+        void syncRecentMessages().catch(() => undefined);
         clearHeartbeat();
         heartbeatTimer = window.setInterval(() => {
-          if (socket?.readyState === WebSocket.OPEN) socket.send("ping");
+          if (socket?.readyState !== WebSocket.OPEN) return;
+          if (awaitingPong) { socket.close(4000, "heartbeat timeout"); return; }
+          awaitingPong = true;
+          socket.send("ping");
         }, 25_000);
       };
       socket.onmessage = (event) => {
+        if (event.data === "pong") { awaitingPong = false; return; }
         try {
           const data = JSON.parse(event.data) as { type: string; message?: Message; messageId?: string; status?: Message["status"] };
           if (data.type === "message.new" && data.message) {
@@ -536,13 +584,17 @@ function ConversationPanel({ conversation, attendants, canAssign, assigning, upd
     };
 
     connect();
+    fallbackTimer = window.setInterval(() => {
+      if (document.visibilityState === "visible" && socket?.readyState !== WebSocket.OPEN) void syncRecentMessages().catch(() => undefined);
+    }, 30_000);
     return () => {
       stopped = true;
       if (reconnectTimer !== null) window.clearTimeout(reconnectTimer);
+      if (fallbackTimer !== null) window.clearInterval(fallbackTimer);
       clearHeartbeat();
       socket?.close(1000, "conversation changed");
     };
-  }, [conversation.id]);
+  }, [conversation.id, syncRecentMessages]);
 
   async function sendMessage(event: FormEvent) {
     event.preventDefault();

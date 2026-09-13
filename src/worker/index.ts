@@ -159,7 +159,7 @@ async function routeApi(request: Request, env: AppEnv): Promise<Response> {
   }
 
   if (method === "GET" && pathname === "/api/conversations/ws") {
-    requirePermission(user, "chat");
+    requireAnyPermission(user, ["chat", "leads"]);
     return env.CHAT_ROOMS.getByName(INBOX_ROOM).fetch(request);
   }
 

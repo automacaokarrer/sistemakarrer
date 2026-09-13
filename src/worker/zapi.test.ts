@@ -1,10 +1,38 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { HttpError } from "./http";
 import { normalizeIncoming, normalizeStatusUpdate, sendMedia, sendText } from "./zapi";
+import { handleZApiWebhook, presencePhoneCandidates } from "./webhook";
+
+vi.mock("./auth", () => ({ safeEqual: async () => true }));
 
 afterEach(() => vi.restoreAllMocks());
 
 describe("webhook Z-API", () => {
+  it("localiza presença com ou sem nono dígito brasileiro", () => {
+    expect(presencePhoneCandidates("559284078295")).toEqual(["559284078295", "5592984078295"]);
+    expect(presencePhoneCandidates("5592984078295")).toEqual(["5592984078295", "559284078295"]);
+    expect(presencePhoneCandidates("12025550123")).toEqual(["12025550123"]);
+  });
+  it("publica presença do contato mesmo quando o callback usa o número antigo", async () => {
+    const broadcast = vi.fn(async () => undefined);
+    const lookup = vi.fn(async () => ({ id: "conversation-1" }));
+    const update = vi.fn(async () => undefined);
+    const bind = vi.fn((...values: unknown[]) => ({ first: lookup, run: update, values }));
+    const env = {
+      ZAPI_WEBHOOK_TOKEN: "test-token",
+      DB: { prepare: vi.fn(() => ({ bind })) },
+      CHAT_ROOMS: { getByName: vi.fn(() => ({ broadcast })) },
+    } as never;
+    const request = new Request("https://crm.test/api/webhooks/zapi/test-token", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ type: "PresenceChatCallback", phone: "559284078295", status: "AVAILABLE", lastSeen: null }),
+    });
+
+    expect((await handleZApiWebhook(request, env, "test-token")).status).toBe(200);
+    expect(bind.mock.calls[0]?.slice(0, 2)).toEqual(["559284078295", "5592984078295"]);
+    expect(update).toHaveBeenCalledOnce();
+    expect(broadcast).toHaveBeenCalledWith(expect.objectContaining({ type: "conversation.presence", online: true }));
+  });
   it("normaliza mensagem de texto recebida", () => {
     const message = normalizeIncoming({
       messageId: "za-1",

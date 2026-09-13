@@ -13,8 +13,8 @@ async function mockDashboard(
   page: Page,
   additionalConversations: () => unknown[] = () => [],
   messagePage: (url: URL) => unknown = () => ({ messages: [], hasMore: false, nextCursor: null }),
+  permissions = { chat: true, leads: true, clients: true, settings: true },
 ) {
-  const permissions = { chat: true, leads: true, clients: true, settings: true };
   const user = { id: "admin-1", name: "Ana Karrer", email: "ana@karrer.test", role: "admin", avatarUrl: null, professionalRole: "Administradora", permissions };
   const conversationOverrides = new Map<string, Record<string, unknown>>();
   const conversations = [{
@@ -178,6 +178,44 @@ test("nova conversa aparece em tempo real sem recarregar a página", async ({ pa
   await page.getByRole("button", { name: /Contato em tempo real/ }).click();
   await expect(page.getByLabel("1 mensagem não lida")).toHaveCount(0);
   await expect(page.getByRole("button", { name: /Contato em tempo real/ }).locator(".conversation-assignee")).toContainText("Ana Karrer atendendo");
+});
+
+test("usuário somente de Leads recebe novas conversas pelo WebSocket", async ({ page }) => {
+  let additionalConversations: unknown[] = [];
+  let inboxSocket: WebSocketRoute | null = null;
+  await page.routeWebSocket(/\/api\/conversations\/ws$/, (socket) => { inboxSocket = socket; });
+  await mockDashboard(page, () => additionalConversations, undefined, { chat: false, leads: true, clients: false, settings: false });
+  await page.goto("/");
+  await expect(page.getByRole("heading", { name: "Leads", exact: true })).toBeVisible();
+  await expect.poll(() => Boolean(inboxSocket)).toBe(true);
+  additionalConversations = [{
+    id: "conversation-2", contactId: "contact-2", createdAt: now, name: "Lead novo", phone: "5592888888888",
+    bank: null, stage: "Primeiro contato", classification: "warm", score: 50, lastMessage: "Olá",
+    lastMessageType: "text", lastMessageAt: now, unreadCount: 1, online: false, lastSeenAt: null,
+    waitingSince: now, serviceStatus: "new", assigneeId: null, assigneeName: null, avatarUrl: null,
+  }];
+  inboxSocket!.send(JSON.stringify({ type: "conversation.updated" }));
+  await expect(page.getByText("Lead novo")).toBeVisible();
+});
+
+test("ao voltar para a aba recupera conversa e mensagem sem evento WebSocket", async ({ page }) => {
+  let additionalConversations: unknown[] = [];
+  let recentMessages: unknown[] = [];
+  await page.routeWebSocket(/\/api\/conversations\/ws$/, () => undefined);
+  await page.routeWebSocket(/\/api\/conversations\/[^/]+\/ws$/, () => undefined);
+  await mockDashboard(page, () => additionalConversations, () => ({ messages: recentMessages, hasMore: false, nextCursor: null }));
+  await page.goto("/");
+  await page.getByRole("button", { name: /Maria Oliveira/ }).click();
+  additionalConversations = [{
+    id: "conversation-2", contactId: "contact-2", createdAt: now, name: "Conversa recuperada", phone: "5592888888888",
+    bank: null, stage: "Primeiro contato", classification: "warm", score: 50, lastMessage: "Nova mensagem",
+    lastMessageType: "text", lastMessageAt: now, unreadCount: 1, online: false, lastSeenAt: null,
+    waitingSince: now, serviceStatus: "new", assigneeId: null, assigneeName: null, avatarUrl: null,
+  }];
+  recentMessages = [{ id: "missed-1", conversationId: "conversation-1", direction: "inbound", type: "text", body: "Mensagem recuperada", fileName: null, mediaKey: null, duration: null, status: "received", createdAt: now }];
+  await page.evaluate(() => document.dispatchEvent(new Event("visibilitychange")));
+  await expect(page.getByRole("button", { name: /Conversa recuperada/ })).toBeVisible();
+  await expect(page.getByText("Mensagem recuperada")).toBeVisible();
 });
 
 test("histórico carrega 40 mensagens e busca as anteriores ao rolar", async ({ page }) => {
