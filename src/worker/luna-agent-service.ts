@@ -2,7 +2,7 @@ import OpenAI from "openai";
 import type { Response, ResponseFunctionToolCall, ResponseInput, ResponseInputContent } from "openai/resources/responses/responses";
 import { HttpError } from "./http";
 import { getAuthorizedFile, getClientContext } from "./luna-memory";
-import { executeLunaTool, lunaTools } from "./luna-tools";
+import { executeLunaTool, toolsForLunaRequest } from "./luna-tools";
 import { lunaInputTypes, lunaStatuses, type LunaAnalysis, type LunaInputType, type ValidatedLunaRequest } from "./luna-types";
 import { transcribeAudio } from "./transcription-service";
 import type { AppEnv, SessionUser } from "./types";
@@ -17,7 +17,7 @@ export class LunaServiceError extends Error {
 export interface LunaServiceResult {
   analysis: LunaAnalysis;
   model: string;
-  usage: { inputTokens: number; outputTokens: number; totalTokens: number };
+  usage: { inputTokens: number; cachedInputTokens: number; outputTokens: number; totalTokens: number };
   toolCalls: number;
   fileHash: string;
 }
@@ -107,10 +107,16 @@ export async function runLunaAgent(env: AppEnv, user: Pick<SessionUser, "id">, i
   if (!env.OPENAI_API_KEY || !env.OPENAI_LUNA_AGENT_ID) throw new LunaServiceError("AI_NOT_CONFIGURED", "A Luna ainda não foi configurada pelo administrador.", 503);
   const client = new OpenAI({ apiKey: env.OPENAI_API_KEY, maxRetries: 1, timeout: 45_000 });
   try {
-    const [agent, context] = await Promise.all([
+    const [agent, fullContext] = await Promise.all([
       client.beta.agents.retrieve(env.OPENAI_LUNA_AGENT_ID),
       getClientContext(env, input.clientId, input.conversationId),
     ]);
+    const passive = input.metadata.mode === "human_passive_memory";
+    const context = passive ? {
+      ...fullContext,
+      documents: { received: fullContext.documents.received.slice(0, 8), pending: fullContext.documents.pending.slice(0, 8) },
+      importantFacts: fullContext.importantFacts.slice(0, 8),
+    } : fullContext;
     const content: ResponseInputContent[] = [{
       type: "input_text",
       text: JSON.stringify({ request: { inputType: input.inputType, text: input.text, metadata: input.metadata }, context }),
@@ -130,20 +136,23 @@ export async function runLunaAgent(env: AppEnv, user: Pick<SessionUser, "id">, i
         else content.push({ type: "input_file", file_data: dataUrl, filename: document.fileName, detail: "low" });
       }
     }
-    const passiveInstructions = input.metadata.mode === "human_passive_memory"
+    const passiveInstructions = passive
       ? " Você está em modo passivo porque um atendente humano conduz a conversa. Registre fatos, pendências e um resumo acumulado, mas jamais escreva uma mensagem para o cliente ou solicite o envio de resposta."
       : "";
     const instructions = `${agent.instructions ?? ""}\n\nVocê é Luna dentro do CRM Karrer. Use somente o contexto fornecido e as ferramentas autorizadas. Não invente dados. Retorne uma análise curta no schema exigido. A memória permanente pertence ao D1 do CRM; não solicite nem reproduza raciocínio interno.${passiveInstructions}`;
+    const tools = toolsForLunaRequest(input);
     const common = {
       model: agent.model,
       instructions,
-      tools: lunaTools,
+      tools,
+      tool_choice: tools.length ? "auto" as const : "none" as const,
       parallel_tool_calls: false,
-      max_output_tokens: 1200,
-      max_tool_calls: MAX_TOOL_ROUNDS,
+      max_output_tokens: passive && input.inputType === "text" ? 450 : input.inputType === "text" ? 700 : 900,
+      reasoning: { effort: input.inputType === "text" ? "none" as const : "low" as const },
       store: false,
       text: { format: { type: "json_schema" as const, name: "luna_analysis", strict: false, schema: analysisSchema }, verbosity: "low" as const },
       metadata: { integration: "karrer-luna", request_id: requestId },
+      prompt_cache_key: `karrer-luna-${input.clientId}`.slice(0, 64),
     };
     let response = await client.responses.create({ ...common, input: [{ role: "user", content }] });
     let toolCalls = 0;
@@ -170,7 +179,9 @@ export async function runLunaAgent(env: AppEnv, user: Pick<SessionUser, "id">, i
     const analysis = validateLunaAnalysis(parsed, input.inputType);
     return {
       analysis, model: response.model || agent.model, toolCalls, fileHash,
-      usage: { inputTokens: response.usage?.input_tokens ?? 0, outputTokens: response.usage?.output_tokens ?? 0, totalTokens: response.usage?.total_tokens ?? 0 },
+      usage: { inputTokens: response.usage?.input_tokens ?? 0,
+        cachedInputTokens: response.usage?.input_tokens_details?.cached_tokens ?? 0,
+        outputTokens: response.usage?.output_tokens ?? 0, totalTokens: response.usage?.total_tokens ?? 0 },
     };
   } catch (reason) {
     throw mapOpenAIError(reason);

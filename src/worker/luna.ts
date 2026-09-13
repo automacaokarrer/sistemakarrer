@@ -60,10 +60,11 @@ export async function handleLunaRequest(request: Request, env: AppEnv, user: Ses
       conversationId: input.conversationId, status: result.analysis.status, confidence: result.analysis.confidence });
     await recordLunaRun(env, { id: crypto.randomUUID(), requestId, input, userId: user.id, status: "completed", model: result.model,
       durationMs: Date.now() - startedAt, inputTokens: result.usage.inputTokens, outputTokens: result.usage.outputTokens,
-      totalTokens: result.usage.totalTokens, toolCalls: result.toolCalls });
+      cachedInputTokens: result.usage.cachedInputTokens, totalTokens: result.usage.totalTokens, toolCalls: result.toolCalls });
     console.log(JSON.stringify({ event: "luna.completed", requestId, clientId: input.clientId, inputType: input.inputType,
       status: result.analysis.status, durationMs: Date.now() - startedAt, model: result.model, toolCalls: result.toolCalls,
-      inputTokens: result.usage.inputTokens, outputTokens: result.usage.outputTokens, totalTokens: result.usage.totalTokens }));
+      inputTokens: result.usage.inputTokens, cachedInputTokens: result.usage.cachedInputTokens,
+      outputTokens: result.usage.outputTokens, totalTokens: result.usage.totalTokens }));
     return json({ success: true, requestId, cached: false, data: result.analysis });
   } catch (reason) {
     const serviceError = reason instanceof LunaServiceError ? reason : reason instanceof HttpError

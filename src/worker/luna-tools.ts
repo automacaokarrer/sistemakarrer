@@ -46,6 +46,10 @@ export const lunaTools: FunctionTool[] = [
       summary: stringProperty("Resumo objetivo do atendimento", 2000) }, ["clientId", "caseId", "summary"]) },
 ];
 
+export function toolsForLunaRequest(request: ValidatedLunaRequest): FunctionTool[] {
+  return request.metadata.toolMode === "crm" && request.metadata.mode !== "human_passive_memory" ? lunaTools : [];
+}
+
 function record(value: unknown): Record<string, unknown> {
   if (!value || typeof value !== "object" || Array.isArray(value)) throw new HttpError("Argumentos de ferramenta inválidos.", 422);
   return value as Record<string, unknown>;

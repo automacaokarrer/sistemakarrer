@@ -2,7 +2,7 @@ import { HttpError, cleanText, json, normalizePhone, readJson } from "./http";
 import type { AppEnv, SessionUser } from "./types";
 import { fetchContactProfilePicture, sendMedia, sendText } from "./zapi";
 import { INBOX_ROOM } from "./realtime";
-import { scheduleHumanConversationMemory } from "./luna-passive";
+import { scheduleHumanConversationMemory, scheduleHumanConversationMemoryFlush } from "./luna-passive";
 
 type Classification = "hot" | "warm" | "cold";
 export type ServiceStatus = "new" | "in_progress" | "waiting_customer" | "resolved";
@@ -187,7 +187,8 @@ export async function updateConversationAssignee(request: Request, env: AppEnv, 
   return json({ ok: true, assigneeName });
 }
 
-export async function updateConversationStatus(request: Request, env: AppEnv, user: SessionUser, conversationId: string): Promise<Response> {
+export async function updateConversationStatus(request: Request, env: AppEnv, user: SessionUser, conversationId: string,
+  ctx?: ExecutionContext): Promise<Response> {
   const input = await readJson<{ status?: unknown }>(request);
   const status = conversationStatus(input.status);
   const result = await env.DB.prepare("UPDATE conversations SET service_status = ?1, updated_at = ?2 WHERE id = ?3")
@@ -195,6 +196,7 @@ export async function updateConversationStatus(request: Request, env: AppEnv, us
   if (!result.meta.changes) throw new HttpError("Conversa não encontrada.", 404);
   await audit(env, user, "conversation.status.update", "conversation", conversationId, { status });
   await env.CHAT_ROOMS.getByName(INBOX_ROOM).broadcast({ type: "conversation.updated", conversationId });
+  if (status === "waiting_customer" || status === "resolved") scheduleHumanConversationMemoryFlush(env, ctx, conversationId);
   return json({ ok: true, status });
 }
 

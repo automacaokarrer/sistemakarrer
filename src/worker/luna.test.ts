@@ -2,8 +2,8 @@ import { describe, expect, it } from "vitest";
 import { HttpError } from "./http";
 import { runLunaAgent, validateLunaAnalysis } from "./luna-agent-service";
 import { validateLunaRequest } from "./luna";
-import { executeLunaTool } from "./luna-tools";
-import { buildPassiveLunaInput, isHumanAttending } from "./luna-passive";
+import { executeLunaTool, toolsForLunaRequest } from "./luna-tools";
+import { buildPassiveLunaInput, isHumanAttending, shouldAnalyzePassiveMessage } from "./luna-passive";
 
 describe("entrada da Luna", () => {
   it("aceita texto e usa caseId como atendimento", () => {
@@ -81,7 +81,7 @@ describe("memória passiva durante atendimento humano", () => {
       metadata: { mode: "human_passive_memory", direction: "inbound" } });
     expect(input.text).toContain("Atendente: Pode enviar o contrato?");
     expect(input.text).toContain("Cliente: Vou enviar o contrato amanhã.");
-    expect(input.text).toContain("nunca deve ser enviada ao cliente");
+    expect(input.text).toContain("nunca responda ao cliente");
   });
 
   it("analisa PDF e transforma anexos não suportados em memória textual", () => {
@@ -104,5 +104,23 @@ describe("memória passiva durante atendimento humano", () => {
         metadata: { mode: "human_passive_memory" } },
     };
     await expect(executeLunaTool(call, context)).resolves.toMatchObject({ saved: false });
+  });
+
+  it("agrupa texto em blocos de três e mantém anexos e encerramentos imediatos", () => {
+    expect(shouldAnalyzePassiveMessage(1, false)).toBe(false);
+    expect(shouldAnalyzePassiveMessage(2, false)).toBe(false);
+    expect(shouldAnalyzePassiveMessage(3, false)).toBe(true);
+    expect(shouldAnalyzePassiveMessage(4, false)).toBe(false);
+    expect(shouldAnalyzePassiveMessage(1, true)).toBe(true);
+    expect(shouldAnalyzePassiveMessage(1, false, true)).toBe(true);
+    expect(shouldAnalyzePassiveMessage(0, false, true)).toBe(false);
+  });
+
+  it("não envia schemas de ferramentas por padrão e libera o perfil CRM somente sob demanda", () => {
+    const request = { clientId: "client-1", conversationId: "conversation-1", inputType: "text" as const,
+      text: "x", fileKey: null, metadata: {} };
+    expect(toolsForLunaRequest(request)).toHaveLength(0);
+    expect(toolsForLunaRequest({ ...request, metadata: { toolMode: "crm" } }).length).toBeGreaterThan(0);
+    expect(toolsForLunaRequest({ ...request, metadata: { toolMode: "crm", mode: "human_passive_memory" } })).toHaveLength(0);
   });
 });

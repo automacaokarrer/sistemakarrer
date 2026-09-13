@@ -66,7 +66,17 @@ Erros da integração seguem `{ "success": false, "requestId": "...", "code": ".
 
 Quando uma conversa possui responsável e não está finalizada, a Luna trabalha em modo passivo. Mensagens recebidas e envios bem-sucedidos do atendente são analisados em segundo plano, sem atrasar o webhook nem o chat. A Luna atualiza fatos, pendências, análises de imagens/PDFs/áudios e um resumo acumulado no D1.
 
-O modo passivo não chama a Z-API, não insere mensagem de saída e não envia resposta ao cliente. O contexto usa no máximo as 12 mensagens recentes, com texto limitado, e o resumo só é substituído por uma análise correspondente à mesma mensagem ou a uma mensagem mais nova. Conversas sem responsável ou com status `resolved` não disparam essa captura.
+O modo passivo não chama a Z-API, não insere mensagem de saída e não envia resposta ao cliente. Para reduzir custo, mensagens de texto são acumuladas e analisadas a cada três mensagens; imagens, PDFs e áudios continuam imediatos. A mudança para `waiting_customer` ou `resolved` força a atualização final do que ainda estiver pendente. O contexto usa no máximo as 8 mensagens recentes, com até 500 caracteres por mensagem, e o resumo só é substituído por uma análise correspondente à mesma mensagem ou a uma mensagem mais nova. Conversas sem responsável não disparam essa captura.
+
+## Controle de tokens e ferramentas
+
+- O modelo configurado é carregado da agente; a Luna usa o esforço `none` em texto e `low` em arquivos.
+- Texto passivo tem limite de 450 tokens de saída; as demais análises usam limites entre 700 e 900.
+- O contexto passivo leva no máximo 8 documentos recebidos, 8 pendências, 8 fatos e 8 mensagens recentes.
+- `prompt_cache_key` separa o cache por cliente; `cached_input_tokens` é gravado em `luna_runs` para medir o resultado.
+- Nenhum schema de ferramenta é enviado por padrão. Uma chamada autenticada pode informar `metadata.toolMode = "crm"` para carregar o conjunto de ferramentas do CRM somente quando necessário.
+
+Novas ferramentas podem ser conectadas em `src/worker/luna-tools.ts`. Cada ferramenta precisa ter schema limitado, validar `clientId` e `caseId` contra a requisição atual, exigir a permissão adequada no endpoint e registrar alterações relevantes. Integrações externas devem usar secrets do Worker e nunca entregar credenciais ao modelo.
 
 ## Teste local sem dados reais
 

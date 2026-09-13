@@ -164,7 +164,7 @@ async function routeApi(request: Request, env: AppEnv, ctx: ExecutionContext): P
   const conversationStatus = routeMatch(pathname, /^\/api\/conversations\/([^/]+)\/status$/);
   if (conversationStatus && method === "PATCH") {
     requirePermission(user, "chat");
-    return updateConversationStatus(request, env, user, conversationStatus[1]);
+    return updateConversationStatus(request, env, user, conversationStatus[1], ctx);
   }
 
   if (method === "GET" && pathname === "/api/conversations/ws") {
