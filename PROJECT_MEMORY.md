@@ -21,8 +21,8 @@ Este arquivo registra decisões, estado de produção e procedimentos importante
 - D1: `karrer-atendimento-db`.
 - R2: `karrer-atendimento-media`.
 - Durable Object: `ChatRoom`.
-- Última versão Cloudflare validada nesta data: `f5a96e89-2bf9-4df0-abf1-e1a1a18fda76`.
-- Commit de código correspondente: `6698c6e`.
+- Última versão Cloudflare validada nesta data: `d0b2d304-67f7-4493-8575-6d6bcae2782f`.
+- Commit de código correspondente: `b11011f`.
 - O endpoint protegido do webhook Z-API respondeu corretamente após o deploy.
 
 ## Funcionalidades implementadas
@@ -130,7 +130,7 @@ npm.cmd run build
 - A migração `migrations/0007_first_response_index.sql` adiciona índice para localizar a primeira mensagem recebida e a primeira resposta por conversa sem varrer todo o histórico.
 - Todas as migrações até `0007_first_response_index.sql` estão aplicadas no D1 remoto; a lista remota não mostrou migrações pendentes após o deploy.
 - Todas as migrations até `0008_luna_ai.sql` estão aplicadas no D1 remoto; a lista remota não mostrou migrations pendentes após o deploy da integração Luna.
-- A migration `0009_luna_token_metrics.sql` adiciona `cached_input_tokens` e um índice de métricas de uso para medir economia de cache; ela foi validada no D1 local e permanece pendente no remoto.
+- A migration `0009_luna_token_metrics.sql` adiciona `cached_input_tokens` e um índice de métricas de uso para medir economia de cache; ela está aplicada no D1 local e remoto.
 
 ### Runbook de deploy no Cloudflare
 
@@ -252,4 +252,4 @@ Deploy e push são operações diferentes: o deploy publica os arquivos locais n
 - O quadro da equipe em Leads passa a mostrar presença online (mesmo critério de sessão ativa nos últimos seis minutos da Administração) e carga atual por responsável: conversas `in_progress` contam como em atendimento; `waiting_customer` aparecem como aguardando cliente. Uma pessoa offline com conversa ainda aberta mostra o lead em andamento, sem ser contada como atendendo agora. O endpoint leve de atendentes agrega sessões e conversas usando os índices existentes, com atualização no máximo a cada 60 segundos enquanto a tela está visível e ao voltar para a aba; não há nova migração. Testes locais: 29 unitários, 20 E2E em desktop e celular, typecheck e build aprovados. O commit `4f22339` foi enviado ao `main` institucional e publicado no Worker `a1224044-c4e2-4c56-bbb6-4abc5f14327f`; a página pública e `/api/auth/status` retornaram HTTP 200, o HTML referenciou `index-BCNXL2B7.js` e a rota da equipe respondeu HTTP 401 sem sessão. Não havia sessão autenticada disponível para confirmar visualmente os estados reais da equipe em produção.
 - Continua pendente configurar no Cloudflare os três secrets do Google Drive usando as credenciais da conta de serviço institucional da Karrer e repetir o deploy e o teste de upload.
 - A integração Luna foi publicada em 13 de setembro de 2026 no Worker `f5a96e89-2bf9-4df0-abf1-e1a1a18fda76`, correspondente ao commit de código `6698c6e`. `OPENAI_API_KEY` e `OPENAI_LUNA_AGENT_ID` foram confirmados como secrets ocultos do Worker; as cinco tabelas `luna_*` existem no D1 remoto e não há migrations pendentes. A validação incluiu typecheck, build, 40 testes unitários, 20 cenários E2E em desktop/celular, auditoria de dependências de produção sem vulnerabilidades, chamada mínima bem-sucedida à agente real sem dados de clientes e resposta HTTP 200 do endpoint público de saúde. Próximo passo operacional: observar a primeira mensagem real de uma conversa atribuída a um humano e confirmar a criação de memória passiva no D1 sem mensagem automática de saída.
-- A otimização de consumo da Luna foi preparada localmente: processamento textual em lotes de três, flush ao aguardar/finalizar, anexos imediatos, contexto reduzido, esforço `none`/`low`, saída limitada, cache por cliente, métricas de tokens em cache e ferramentas carregadas somente sob demanda. Passou por 42 testes unitários, 20 E2E, typecheck, build e migration `0009` local.
+- A otimização de consumo da Luna foi publicada no Worker `d0b2d304-67f7-4493-8575-6d6bcae2782f`, correspondente ao commit de código `b11011f`: processamento textual em lotes de três, flush ao aguardar/finalizar, anexos imediatos, contexto reduzido, esforço `none`/`low`, saída limitada, cache por cliente, métricas de tokens em cache e ferramentas carregadas somente sob demanda. Passou por 42 testes unitários, 20 E2E, typecheck e build. A migration `0009` está aplicada remotamente, os secrets OpenAI foram preservados, a coluna `cached_input_tokens` foi confirmada no schema remoto e o endpoint de saúde respondeu HTTP 200.
