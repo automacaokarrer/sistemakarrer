@@ -393,6 +393,11 @@ input:focus, select:focus, textarea:focus { border-color: #9b805e !important; bo
 .attendant-response-person > span { display: grid; gap: 3px; min-width: 0; }
 .attendant-response-person > span strong { overflow: hidden; font-size: 11px; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
 .attendant-response-person > span small { color: #756d63; font-size: 9px; }
+.attendant-response-states { display: flex; flex-wrap: wrap; gap: 4px; }
+.attendant-response-states em { display: inline-flex; align-items: center; gap: 4px; padding: 2px 5px; border-radius: 5px; background: #f1eee9; color: #756d63; font-size: 9px; font-style: normal; white-space: nowrap; }
+.attendant-response-states em.online { background: #e8f5eb; color: #357344; }
+.attendant-response-states em.busy { background: #fff0cf; color: #795513; }
+.attendant-response-states i { width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
 .attendant-response-person > b { flex: 0 0 auto; margin-left: auto; color: #2d2518; font-size: 13px; white-space: nowrap; }
 .attendant-response-empty { margin: 0; color: #756d63; font-size: 11px; }
 .leads-page .leads-table { min-height: 175px; overflow: hidden; border: 1px solid var(--lead-accent); border-radius: 13px; background: #fff; box-shadow: none; }

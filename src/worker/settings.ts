@@ -74,11 +74,26 @@ export async function listUsers(env: AppEnv): Promise<Response> {
 }
 
 export async function listLeadAttendants(env: AppEnv): Promise<Response> {
-  const result = await env.DB.prepare("SELECT id, name, avatar_key AS avatarKey FROM users ORDER BY name COLLATE NOCASE").all<{ id: string; name: string; avatarKey: string | null }>();
+  const onlineSince = new Date(Date.now() - 6 * 60 * 1000).toISOString();
+  const result = await env.DB.prepare(`SELECT u.id, u.name, u.avatar_key AS avatarKey,
+    EXISTS (SELECT 1 FROM sessions s WHERE s.user_id = u.id AND s.last_seen_at > ?1 AND s.expires_at > ?2) AS online,
+    COALESCE(work.activeCount, 0) AS activeCount, COALESCE(work.waitingCount, 0) AS waitingCount
+    FROM users u LEFT JOIN (
+      SELECT assignee_id,
+        SUM(CASE WHEN service_status = 'in_progress' THEN 1 ELSE 0 END) AS activeCount,
+        SUM(CASE WHEN service_status = 'waiting_customer' THEN 1 ELSE 0 END) AS waitingCount
+      FROM conversations WHERE assignee_id IS NOT NULL AND service_status IN ('in_progress', 'waiting_customer')
+      GROUP BY assignee_id
+    ) work ON work.assignee_id = u.id
+    ORDER BY u.name COLLATE NOCASE`)
+    .bind(onlineSince, new Date().toISOString()).all<{ id: string; name: string; avatarKey: string | null; online: number; activeCount: number; waitingCount: number }>();
   return json({ attendants: result.results.map((row) => ({
     id: row.id,
     name: row.name,
     avatarUrl: row.avatarKey ? `/api/settings/users/${row.id}/avatar` : null,
+    online: Boolean(row.online),
+    activeCount: row.activeCount,
+    waitingCount: row.waitingCount,
   })) });
 }
 

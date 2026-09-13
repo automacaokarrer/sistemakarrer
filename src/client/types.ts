@@ -31,6 +31,9 @@ export interface LeadAttendant {
   id: string;
   name: string;
   avatarUrl: string | null;
+  online: boolean;
+  activeCount: number;
+  waitingCount: number;
 }
 
 export interface AuthStatus {

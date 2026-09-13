@@ -47,9 +47,9 @@ async function mockDashboard(
     }
     else if (path === "/api/leads/summary") body = { total: 1, hot: 1, warm: 0, cold: 0, averageFirstResponseMinutes: 4, daily: [] };
     else if (path === "/api/leads/attendants") body = { attendants: [
-      { id: "admin-1", name: "Ana Karrer", avatarUrl: "/karrer-logo.png" },
-      { id: "user-2", name: "João Lima", avatarUrl: null },
-      { id: "user-3", name: "Lia Costa", avatarUrl: null },
+      { id: "admin-1", name: "Ana Karrer", avatarUrl: "/karrer-logo.png", online: true, activeCount: 1, waitingCount: 0 },
+      { id: "user-2", name: "João Lima", avatarUrl: null, online: false, activeCount: 1, waitingCount: 0 },
+      { id: "user-3", name: "Lia Costa", avatarUrl: null, online: false, activeCount: 0, waitingCount: 0 },
     ] };
     else if (path === "/api/settings/users") body = { users };
     else if (/\/api\/conversations\/[^/]+\/read$/.test(path) && route.request().method() === "POST") {
@@ -154,7 +154,7 @@ test("painel principal abre todos os módulos autorizados", async ({ page }, tes
   await expectNoHorizontalOverflow(page);
 });
 
-test("média da primeira resposta muda conforme o atendente", async ({ page }) => {
+test("média da primeira resposta muda conforme o atendente", async ({ page }, testInfo) => {
   await mockDashboard(page, () => [{
     id: "conversation-2", contactId: "contact-2", createdAt: now, name: "Contato de João", phone: "5592888888888",
     bank: null, stage: "Primeiro contato", classification: "warm", score: 50, lastMessage: "Respondido",
@@ -173,7 +173,14 @@ test("média da primeira resposta muda conforme o atendente", async ({ page }) =
   await expect(team.locator(".attendant-response-person").filter({ hasText: "Ana Karrer" })).toContainText("5,1 min");
   await expect(team.locator(".attendant-response-person").filter({ hasText: "João Lima" })).toContainText("14,9 min");
   await expect(team.locator(".attendant-response-person").filter({ hasText: "Lia Costa" })).toContainText("Nenhuma resposta no período");
+  await expect(team.locator(".attendant-response-person").filter({ hasText: "Ana Karrer" })).toContainText("Online");
+  await expect(team.locator(".attendant-response-person").filter({ hasText: "Ana Karrer" })).toContainText("Atendendo 1 lead");
+  await expect(team.locator(".attendant-response-person").filter({ hasText: "João Lima" })).toContainText("Offline");
+  await expect(team.locator(".attendant-response-person").filter({ hasText: "João Lima" })).toContainText("1 lead em andamento");
+  await expect(team.locator(".attendant-response-person").filter({ hasText: "Lia Costa" })).toContainText("Sem atendimento ativo");
   await expect(team.locator(".attendant-response-person").filter({ hasText: "Ana Karrer" }).getByRole("img", { name: "Foto de Ana Karrer" })).toBeVisible();
+  await expectNoHorizontalOverflow(page);
+  if (process.env.CAPTURE_UI) await page.screenshot({ path: `tmp/${testInfo.project.name}-lead-presence.png`, fullPage: true });
   await page.getByRole("combobox", { name: "Atendente responsável" }).selectOption("admin-1");
   await expect(page.locator(".response-time strong")).toContainText("5,1 min");
   await page.getByRole("combobox", { name: "Atendente responsável" }).selectOption("user-2");
