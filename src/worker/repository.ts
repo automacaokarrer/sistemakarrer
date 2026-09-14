@@ -415,7 +415,16 @@ export async function uploadMedia(request: Request, env: AppEnv, user: SessionUs
   return json({ key, fileName: original, mime, size: length }, { status: 201 });
 }
 
-export async function getMedia(env: AppEnv, key: string): Promise<Response> {
+export function mediaDownloadName(requested: string | null, mime: string | null): string {
+  const sanitized = (requested ?? "imagem").trim().slice(0, 180).replace(/[^a-zA-Z0-9._-]/g, "_").replace(/^[._-]+|[._-]+$/g, "");
+  const base = sanitized || "imagem";
+  if (/\.[a-zA-Z0-9]{1,8}$/.test(base)) return base;
+  const contentType = mime?.split(";", 1)[0]?.trim().toLowerCase();
+  const extension = contentType === "image/png" ? "png" : contentType === "image/webp" ? "webp" : contentType === "image/gif" ? "gif" : contentType === "image/jpeg" ? "jpg" : "bin";
+  return `${base}.${extension}`;
+}
+
+export async function getMedia(env: AppEnv, key: string, url?: URL): Promise<Response> {
   const object = await env.MEDIA.get(key);
   if (!object) throw new HttpError("Arquivo não encontrado.", 404);
   const headers = new Headers();
@@ -423,5 +432,9 @@ export async function getMedia(env: AppEnv, key: string): Promise<Response> {
   headers.set("ETag", object.httpEtag);
   headers.set("Cache-Control", "private, max-age=300");
   headers.set("Content-Security-Policy", "default-src 'none'; sandbox");
+  headers.set("X-Content-Type-Options", "nosniff");
+  if (url?.searchParams.get("download") === "1") {
+    headers.set("Content-Disposition", `attachment; filename="${mediaDownloadName(url.searchParams.get("filename"), headers.get("content-type"))}"`);
+  }
   return new Response(object.body, { headers });
 }

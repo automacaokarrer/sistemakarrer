@@ -118,7 +118,7 @@ async function routeApi(request: Request, env: AppEnv, ctx: ExecutionContext): P
   const media = routeMatch(pathname, /^\/api\/media\/(.+)$/);
   if (method === "GET" && media) {
     requireAnyPermission(user, ["chat", "clients"]);
-    return getMedia(env, decodeURIComponent(media[1]));
+    return getMedia(env, decodeURIComponent(media[1]), url);
   }
 
   const contactDocuments = routeMatch(pathname, /^\/api\/contacts\/([^/]+)\/documents$/);

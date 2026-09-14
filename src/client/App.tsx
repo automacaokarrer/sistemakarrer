@@ -446,7 +446,7 @@ function ConversationPanel({ conversation, attendants, canAssign, assigning, upd
   const [uploadingMedia, setUploadingMedia] = useState(false);
   const [recording, setRecording] = useState(false);
   const [pendingAttachment, setPendingAttachment] = useState<{ file: File; kind: "image" | "audio" | "document"; previewUrl: string | null; duration?: number } | null>(null);
-  const [openImage, setOpenImage] = useState<{ url: string; alt: string } | null>(null);
+  const [openImage, setOpenImage] = useState<{ url: string; alt: string; downloadUrl: string } | null>(null);
   const [sendError, setSendError] = useState("");
   const endRef = useRef<HTMLDivElement>(null);
   const messagesRef = useRef<HTMLDivElement>(null);
@@ -686,7 +686,7 @@ function ConversationPanel({ conversation, attendants, canAssign, assigning, upd
         {loading && <div className="loading-messages"><LoaderCircle className="spin" size={15} /> Carregando mensagens...</div>}
         {loadingOlder && <div className="loading-messages"><LoaderCircle className="spin" size={15} /> Carregando mensagens anteriores...</div>}
         <div className="date-pill">Hoje</div>
-        {messages.map((message) => <MessageBubble key={message.id} message={message} onImageOpen={(url, alt) => setOpenImage({ url, alt })} />)}
+        {messages.map((message) => <MessageBubble key={message.id} message={message} onImageOpen={setOpenImage} />)}
         {sendError && <div className="message-error" role="alert">{sendError}</div>}
         {!loading && messages.length === 0 && <Empty text="Ainda não há mensagens nesta conversa." dark />}
         <div ref={endRef} />
@@ -714,6 +714,7 @@ function ConversationPanel({ conversation, attendants, canAssign, assigning, upd
         <button type={text.trim() && !recording ? "submit" : "button"} className={`send-button ${recording ? "recording" : ""}`} disabled={sending} onClick={text.trim() && !recording ? undefined : (event) => { event.preventDefault(); void toggleRecording(); }} aria-label={recording ? "Parar gravação" : text.trim() ? "Enviar" : "Gravar áudio"}>{recording ? <Mic size={19} /> : text.trim() ? <Send size={19} /> : <Mic size={19} />}</button>
       </form>
       {openImage && <div className="image-lightbox" role="dialog" aria-modal="true" aria-label="Imagem em tamanho completo" onMouseDown={(event) => event.target === event.currentTarget && setOpenImage(null)}>
+        <a className="image-lightbox-download" href={openImage.downloadUrl} download><Download size={18} /> Baixar imagem</a>
         <button type="button" className="image-lightbox-close" aria-label="Fechar imagem" onClick={() => setOpenImage(null)}><X size={22} /></button>
         <img src={openImage.url} alt={openImage.alt} />
       </div>}
@@ -721,13 +722,15 @@ function ConversationPanel({ conversation, attendants, canAssign, assigning, upd
   );
 }
 
-function MessageBubble({ message, onImageOpen }: { message: Message; onImageOpen: (url: string, alt: string) => void }) {
+function MessageBubble({ message, onImageOpen }: { message: Message; onImageOpen: (image: { url: string; alt: string; downloadUrl: string }) => void }) {
   const mediaUrl = message.mediaKey ? `/api/media/${encodeURIComponent(message.mediaKey)}` : null;
   const imageAlt = message.body ?? "Imagem enviada";
+  const imageFileName = message.fileName?.trim() || `imagem-${message.id}`;
+  const imageDownloadUrl = mediaUrl ? `${mediaUrl}?download=1&filename=${encodeURIComponent(imageFileName)}` : null;
   return (
     <div className={`message-row ${message.direction}`}>
       <div className={`bubble ${message.type}`}>
-        {message.type === "image" && (mediaUrl ? <button type="button" className="message-image-link" aria-label="Abrir imagem em tamanho completo" title="Abrir imagem" onClick={() => onImageOpen(mediaUrl, imageAlt)}><img className="message-image" src={mediaUrl} alt={imageAlt} /></button> : <div className="media-placeholder"><Image /></div>)}
+        {message.type === "image" && (mediaUrl && imageDownloadUrl ? <button type="button" className="message-image-link" aria-label="Abrir imagem em tamanho completo" title="Abrir imagem" onClick={() => onImageOpen({ url: mediaUrl, alt: imageAlt, downloadUrl: imageDownloadUrl })}><img className="message-image" src={mediaUrl} alt={imageAlt} /></button> : <div className="media-placeholder"><Image /></div>)}
         {message.type === "audio" && (mediaUrl ? <audio className="message-audio" controls preload="metadata" src={mediaUrl} /> : <div className="audio-player"><Mic size={18} /><span /><small>{message.duration ? `${message.duration}s` : "Áudio"}</small></div>)}
         {message.type === "document" && <a className="document-message" href={mediaUrl ?? undefined} target="_blank" rel="noreferrer"><FileText /><span><strong>{message.fileName ?? message.body ?? "Documento"}</strong><small>Abrir documento</small></span></a>}
         {message.body && message.type === "text" && <p>{message.body}</p>}

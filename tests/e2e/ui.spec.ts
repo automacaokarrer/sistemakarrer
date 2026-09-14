@@ -307,6 +307,10 @@ test("ícone de imagem envia arquivo pelo compositor", async ({ page }) => {
   await page.getByRole("button", { name: "Abrir imagem em tamanho completo" }).click();
   await expect(page.getByRole("dialog", { name: "Imagem em tamanho completo" })).toBeVisible();
   await expect(page.getByRole("dialog", { name: "Imagem em tamanho completo" }).getByAltText("Imagem de teste")).toBeVisible();
+  const download = page.getByRole("link", { name: "Baixar imagem" });
+  await expect(download).toBeVisible();
+  await expect(download).toHaveAttribute("download", "");
+  await expect(download).toHaveAttribute("href", /download=1&filename=foto\.png$/);
   await page.getByRole("button", { name: "Fechar imagem" }).click();
   await expect(page.getByRole("dialog", { name: "Imagem em tamanho completo" })).toHaveCount(0);
   await expect(page.getByRole("button", { name: "Anexar documento" })).toBeEnabled();
