@@ -6,6 +6,7 @@ import { normalizeIncoming, normalizeStatusUpdate, storeRemoteMedia } from "./za
 import { INBOX_ROOM } from "./realtime";
 import { scheduleHumanConversationMemory } from "./luna-passive";
 import { scheduleAutonomousReply } from "./luna-autonomous";
+import { scheduleAutomaticLeadClassification } from "./lead-classification";
 
 export function presencePhoneCandidates(phone: string): string[] {
   if (!phone.startsWith("55")) return [phone];
@@ -110,5 +111,6 @@ export async function handleZApiWebhook(request: Request, env: AppEnv, suppliedT
     type: incoming.type, body: incoming.body, mediaKey, fileName: incoming.fileName, mime: incoming.mime, createdAt: incoming.createdAt });
   scheduleAutonomousReply(env, ctx, { id: messageId, conversationId: conversation.id, direction: incoming.direction,
     type: incoming.type, body: incoming.body, mediaKey, fileName: incoming.fileName, mime: incoming.mime, createdAt: incoming.createdAt });
+  if (incoming.direction === "inbound") scheduleAutomaticLeadClassification(env, ctx, conversation.id);
   return json({ ok: true }, { status: 201 });
 }
