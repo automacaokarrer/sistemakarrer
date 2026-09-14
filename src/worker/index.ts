@@ -13,6 +13,7 @@ import {
   listMessages,
   markConversationRead,
   updateConversationAssignee,
+  updateConversationLuna,
   updateConversationStatus,
   sendMessage,
   sendMediaMessage,
@@ -159,6 +160,12 @@ async function routeApi(request: Request, env: AppEnv, ctx: ExecutionContext): P
   if (conversationAssignee && method === "PATCH") {
     requireAdmin(user);
     return updateConversationAssignee(request, env, user, conversationAssignee[1]);
+  }
+
+  const conversationLuna = routeMatch(pathname, /^\/api\/conversations\/([^/]+)\/luna$/);
+  if (conversationLuna && method === "PATCH") {
+    requireAdmin(user);
+    return updateConversationLuna(request, env, user, conversationLuna[1]);
   }
 
   const conversationStatus = routeMatch(pathname, /^\/api\/conversations\/([^/]+)\/status$/);

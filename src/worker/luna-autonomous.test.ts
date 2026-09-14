@@ -21,7 +21,7 @@ const message: PassiveMessage = {
   body: "Olá", mediaKey: null, fileName: null, mime: null, createdAt: "2026-09-14T12:00:00.000Z",
 };
 
-function createEnv(options: { assigneeId?: string | null; claimChanges?: number; latestMessageId?: string; review?: boolean } = {}) {
+function createEnv(options: { assigneeId?: string | null; claimChanges?: number; latestMessageId?: string; review?: boolean; lunaEnabled?: number } = {}) {
   const broadcasts: unknown[] = [];
   const batches: unknown[][] = [];
   const statusUpdates: unknown[][] = [];
@@ -29,10 +29,10 @@ function createEnv(options: { assigneeId?: string | null; claimChanges?: number;
     bind: (...values: unknown[]) => ({
       first: async () => {
         if (sql.includes("c.contact_id AS contactId")) return { contactId: "client-1", phone: "5592999990000",
-          assigneeId: options.assigneeId ?? null, serviceStatus: "new" };
+          assigneeId: options.assigneeId ?? null, serviceStatus: "new", lunaAutonomousEnabled: options.lunaEnabled ?? 1 };
         if (sql.includes("COUNT(*) AS count")) return { count: 0 };
         if (sql.includes("latestMessageId")) return { assigneeId: options.assigneeId ?? null, serviceStatus: "new",
-          latestMessageId: options.latestMessageId ?? message.id };
+          lunaAutonomousEnabled: options.lunaEnabled ?? 1, latestMessageId: options.latestMessageId ?? message.id };
         return null;
       },
       all: async () => ({ results: [{ direction: "inbound", type: "text", body: "Olá", fileName: null, createdAt: message.createdAt }] }),
@@ -65,6 +65,13 @@ beforeEach(() => {
 });
 
 describe("orquestração do atendimento autônomo", () => {
+  it("não processa conversa sem autorização individual", async () => {
+    const { env } = createEnv({ lunaEnabled: 0 });
+    await processAutonomousReply(env, message);
+    expect(runLunaAgent).not.toHaveBeenCalled();
+    expect(sendText).not.toHaveBeenCalled();
+  });
+
   it("não processa conversa que um atendente já assumiu", async () => {
     const { env } = createEnv({ assigneeId: "user-1" });
     await processAutonomousReply(env, message);

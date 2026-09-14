@@ -11,7 +11,7 @@ describe("tempo da primeira resposta", () => {
         CREATE TABLE contacts (id TEXT PRIMARY KEY, name TEXT, phone TEXT, bank TEXT);
         CREATE TABLE conversations (id TEXT PRIMARY KEY, contact_id TEXT, assignee_id TEXT, created_at TEXT,
           last_message_at TEXT, unread_count INTEGER, online INTEGER, last_seen_at TEXT, waiting_since TEXT,
-          service_status TEXT, stage TEXT, classification TEXT, score INTEGER);
+          service_status TEXT, stage TEXT, classification TEXT, score INTEGER, luna_autonomous_enabled INTEGER NOT NULL DEFAULT 0);
         CREATE TABLE messages (id TEXT PRIMARY KEY, conversation_id TEXT, sender_user_id TEXT, direction TEXT,
           type TEXT, body TEXT, status TEXT, created_at TEXT);
       `);

@@ -14,14 +14,15 @@ interface AutonomousConversationRow {
   phone: string;
   assigneeId: string | null;
   serviceStatus: string;
+  lunaAutonomousEnabled: number;
 }
 
 export function autonomousRepliesEnabled(env: Pick<AppEnv, "LUNA_AUTONOMOUS_ENABLED">): boolean {
   return env.LUNA_AUTONOMOUS_ENABLED?.trim().toLowerCase() === "true";
 }
 
-export function shouldReplyAutonomously(message: PassiveMessage, conversation: Pick<AutonomousConversationRow, "assigneeId" | "serviceStatus">): boolean {
-  return message.direction === "inbound" && !conversation.assigneeId && conversation.serviceStatus !== "resolved";
+export function shouldReplyAutonomously(message: PassiveMessage, conversation: Pick<AutonomousConversationRow, "assigneeId" | "serviceStatus" | "lunaAutonomousEnabled">): boolean {
+  return message.direction === "inbound" && Boolean(conversation.lunaAutonomousEnabled) && !conversation.assigneeId && conversation.serviceStatus !== "resolved";
 }
 
 export function buildAutonomousLunaInput(message: PassiveMessage, clientId: string, recentMessages: RecentMessageRow[], firstReply: boolean): ValidatedLunaRequest {
@@ -70,7 +71,8 @@ export async function processAutonomousReply(env: AppEnv, message: PassiveMessag
   let runRecorded = false;
   try {
     const conversation = await env.DB.prepare(`SELECT c.contact_id AS contactId, ct.phone, c.assignee_id AS assigneeId,
-      c.service_status AS serviceStatus FROM conversations c JOIN contacts ct ON ct.id = c.contact_id WHERE c.id = ?1`)
+      c.service_status AS serviceStatus, c.luna_autonomous_enabled AS lunaAutonomousEnabled
+      FROM conversations c JOIN contacts ct ON ct.id = c.contact_id WHERE c.id = ?1`)
       .bind(message.conversationId).first<AutonomousConversationRow>();
     if (!conversation || !shouldReplyAutonomously(message, conversation)) return;
 
@@ -108,10 +110,11 @@ export async function processAutonomousReply(env: AppEnv, message: PassiveMessag
       return;
     }
     const current = await env.DB.prepare(`SELECT c.assignee_id AS assigneeId, c.service_status AS serviceStatus,
+      c.luna_autonomous_enabled AS lunaAutonomousEnabled,
       (SELECT id FROM messages WHERE conversation_id = c.id ORDER BY created_at DESC, id DESC LIMIT 1) AS latestMessageId
       FROM conversations c WHERE c.id = ?1`).bind(message.conversationId)
-      .first<{ assigneeId: string | null; serviceStatus: string; latestMessageId: string | null }>();
-    if (!current || current.assigneeId || current.serviceStatus === "resolved" || current.latestMessageId !== message.id) {
+      .first<{ assigneeId: string | null; serviceStatus: string; lunaAutonomousEnabled: number; latestMessageId: string | null }>();
+    if (!current || !current.lunaAutonomousEnabled || current.assigneeId || current.serviceStatus === "resolved" || current.latestMessageId !== message.id) {
       await setReplyStatus(env, message.id, "skipped", "AI_REPLY_SUPERSEDED");
       return;
     }

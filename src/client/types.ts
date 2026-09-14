@@ -66,6 +66,7 @@ export interface Conversation {
   firstResponseMinutes: number | null;
   firstResponderId: string | null;
   firstResponderName: string | null;
+  lunaAutonomousEnabled: boolean;
 }
 
 export interface Message {

@@ -1,5 +1,6 @@
 import {
   ArrowLeft,
+  Bot,
   Check,
   CheckCheck,
   ChevronDown,
@@ -365,6 +366,7 @@ function ChatPage({ currentUser, conversations, selected, onSelect, onOpenLead, 
   const [attendants, setAttendants] = useState<ManagedUser[]>([]);
   const [assigning, setAssigning] = useState(false);
   const [updatingStatus, setUpdatingStatus] = useState(false);
+  const [updatingLuna, setUpdatingLuna] = useState(false);
   const [actionError, setActionError] = useState("");
   const [now, setNow] = useState(Date.now());
   useEffect(() => {
@@ -396,6 +398,19 @@ function ChatPage({ currentUser, conversations, selected, onSelect, onOpenLead, 
     } catch (reason) {
       setActionError(reason instanceof Error ? reason.message : "Não foi possível atualizar o status.");
     } finally { setUpdatingStatus(false); }
+  }
+  async function toggleLuna() {
+    if (!selected || updatingLuna) return;
+    const enabled = !selected.lunaAutonomousEnabled;
+    if (enabled && !window.confirm("Ativar a Luna nesta conversa? O atendimento humano atual será removido e as próximas mensagens do cliente poderão receber resposta automática.")) return;
+    setUpdatingLuna(true);
+    setActionError("");
+    try {
+      await api(`/api/conversations/${selected.id}/luna`, { method: "PATCH", body: JSON.stringify({ enabled }) });
+      await onRefresh();
+    } catch (reason) {
+      setActionError(reason instanceof Error ? reason.message : "Não foi possível alterar o atendimento da Luna.");
+    } finally { setUpdatingLuna(false); }
   }
   useEffect(() => setActionError(""), [selected?.id]);
   const filtered = conversations.filter((item) => {
@@ -430,12 +445,12 @@ function ChatPage({ currentUser, conversations, selected, onSelect, onOpenLead, 
           {filtered.length === 0 && <div className="conversation-empty"><span><MessageCircle size={19} /></span><strong>Nenhuma conversa</strong><p>{search || filter !== "all" ? "Tente alterar os filtros ou a busca." : "As novas conversas do WhatsApp aparecerão aqui."}</p></div>}
         </div>
       </div>
-      {selected ? <ConversationPanel conversation={selected} attendants={attendants} canAssign={currentUser.role === "admin"} assigning={assigning} updatingStatus={updatingStatus} actionError={actionError} onAssign={assign} onStatus={updateStatus} onBack={() => onSelect(null)} onOpenLead={onOpenLead} onRefresh={onRefresh} /> : <div className="chat-welcome"><div className="welcome-mark"><MessageCircle size={28} /></div><span className="eyebrow">Central de atendimento</span><h2>Suas conversas em um só lugar</h2><p>Selecione um contato ao lado para visualizar o histórico e continuar o atendimento.</p><div className="welcome-features"><span><CheckCheck size={16} /> Histórico organizado</span><span><Users size={16} /> Leads integrados</span><span><ShieldCheck size={16} /> Dados protegidos</span></div><small><i /> Aguardando novas mensagens</small></div>}
+      {selected ? <ConversationPanel conversation={selected} attendants={attendants} canAssign={currentUser.role === "admin"} assigning={assigning} updatingStatus={updatingStatus} updatingLuna={updatingLuna} actionError={actionError} onAssign={assign} onStatus={updateStatus} onToggleLuna={toggleLuna} onBack={() => onSelect(null)} onOpenLead={onOpenLead} onRefresh={onRefresh} /> : <div className="chat-welcome"><div className="welcome-mark"><MessageCircle size={28} /></div><span className="eyebrow">Central de atendimento</span><h2>Suas conversas em um só lugar</h2><p>Selecione um contato ao lado para visualizar o histórico e continuar o atendimento.</p><div className="welcome-features"><span><CheckCheck size={16} /> Histórico organizado</span><span><Users size={16} /> Leads integrados</span><span><ShieldCheck size={16} /> Dados protegidos</span></div><small><i /> Aguardando novas mensagens</small></div>}
     </section>
   );
 }
 
-function ConversationPanel({ conversation, attendants, canAssign, assigning, updatingStatus, actionError, onAssign, onStatus, onBack, onOpenLead, onRefresh }: { conversation: Conversation; attendants: ManagedUser[]; canAssign: boolean; assigning: boolean; updatingStatus: boolean; actionError: string; onAssign: (userId: string) => Promise<void>; onStatus: (status: ServiceStatus) => Promise<void>; onBack: () => void; onOpenLead: () => void; onRefresh: () => Promise<void> }) {
+function ConversationPanel({ conversation, attendants, canAssign, assigning, updatingStatus, updatingLuna, actionError, onAssign, onStatus, onToggleLuna, onBack, onOpenLead, onRefresh }: { conversation: Conversation; attendants: ManagedUser[]; canAssign: boolean; assigning: boolean; updatingStatus: boolean; updatingLuna: boolean; actionError: string; onAssign: (userId: string) => Promise<void>; onStatus: (status: ServiceStatus) => Promise<void>; onToggleLuna: () => Promise<void>; onBack: () => void; onOpenLead: () => void; onRefresh: () => Promise<void> }) {
   const [messages, setMessages] = useState<Message[]>([]);
   const [text, setText] = useState("");
   const [loading, setLoading] = useState(false);
@@ -675,9 +690,10 @@ function ConversationPanel({ conversation, attendants, canAssign, assigning, upd
         <button className="mobile-back" aria-label="Voltar às conversas" onClick={onBack}><ArrowLeft size={20} /></button>
         <Avatar name={conversation.name} imageUrl={conversation.avatarUrl} online={conversation.online} />
         <div className="chat-contact"><h2>{conversation.name}</h2><p>{conversation.online ? <em>Online</em> : conversation.lastSeenAt ? `Visto por último ${new Date(conversation.lastSeenAt).toLocaleString("pt-BR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" })}` : "Visto por último indisponível"} <ClassificationBadge value={conversation.classification} /></p></div>
-        <div className={`chat-routing-controls ${canAssign ? "" : "solo"}`}>
+        <div className={`chat-routing-controls ${canAssign ? "with-luna" : "solo"}`}>
           <CompactSelect className={`service-status-picker ${conversation.serviceStatus}`} label="Status do atendimento" value={conversation.serviceStatus} disabled={updatingStatus} options={Object.entries(serviceStatusLabel).map(([value, label]) => ({ value, label }))} onChange={(value) => void onStatus(value as ServiceStatus)} />
           {canAssign && <CompactSelect className="assignee-picker" label="Direcionar atendimento" value={conversation.assigneeId ?? ""} disabled={assigning} icon={<Users size={15} />} options={[{ value: "", label: "Não atribuído" }, ...attendants.map((attendant) => ({ value: attendant.id, label: attendant.name }))]} onChange={(value) => void onAssign(value)} />}
+          {canAssign && <button type="button" className={`luna-control ${conversation.lunaAutonomousEnabled ? "active" : ""}`} aria-pressed={conversation.lunaAutonomousEnabled} aria-label={conversation.lunaAutonomousEnabled ? "Desativar atendimento da Luna" : "Ativar atendimento da Luna"} disabled={updatingLuna || (!conversation.lunaAutonomousEnabled && conversation.serviceStatus === "resolved")} onClick={() => void onToggleLuna()}><Bot size={16} /><span>{updatingLuna ? "Aguarde" : conversation.lunaAutonomousEnabled ? "Luna ativa" : "Ativar Luna"}</span></button>}
         </div>
         <button className="primary" onClick={onOpenLead}>Ver ficha do lead</button><button className="icon-button"><Menu size={19} /></button>
         {actionError && <div className="chat-action-error" role="alert">{actionError}</div>}
@@ -1111,7 +1127,7 @@ function formatWaitingTime(waitingSince: string, now: number): string {
   return rest ? `${hours}h ${rest}min` : `${hours}h`;
 }
 
-function ConversationRow({ conversation, active, now, onClick }: { conversation: Conversation; active: boolean; now: number; onClick: () => void }) { return <button className={`conversation-row ${active ? "active" : ""}`} onClick={onClick}><Avatar name={conversation.name} imageUrl={conversation.avatarUrl} online={conversation.online} size="sm" /><span><strong>{conversation.name}</strong><small>{conversation.lastMessageType === "audio" ? "Áudio" : conversation.lastMessage ?? conversation.stage}</small><span className="conversation-meta"><em className={`conversation-service-status ${conversation.serviceStatus}`}>{serviceStatusLabel[conversation.serviceStatus]}</em>{conversation.waitingSince && <em className="conversation-waiting"><Clock3 size={11} />Aguardando há {formatWaitingTime(conversation.waitingSince, now)}</em>}{conversation.assigneeName && <em className="conversation-assignee"><i />{conversation.assigneeName} atendendo</em>}</span></span><time>{formatTime(conversation.lastMessageAt)}{conversation.unreadCount > 0 && <b aria-label={`${conversation.unreadCount} ${conversation.unreadCount === 1 ? "mensagem não lida" : "mensagens não lidas"}`}>{conversation.unreadCount}</b>}</time></button>; }
+function ConversationRow({ conversation, active, now, onClick }: { conversation: Conversation; active: boolean; now: number; onClick: () => void }) { return <button className={`conversation-row ${active ? "active" : ""}`} onClick={onClick}><Avatar name={conversation.name} imageUrl={conversation.avatarUrl} online={conversation.online} size="sm" /><span><strong>{conversation.name}</strong><small>{conversation.lastMessageType === "audio" ? "Áudio" : conversation.lastMessage ?? conversation.stage}</small><span className="conversation-meta"><em className={`conversation-service-status ${conversation.serviceStatus}`}>{serviceStatusLabel[conversation.serviceStatus]}</em>{conversation.lunaAutonomousEnabled && <em className="conversation-luna"><Bot size={11} />Luna ativa</em>}{conversation.waitingSince && <em className="conversation-waiting"><Clock3 size={11} />Aguardando há {formatWaitingTime(conversation.waitingSince, now)}</em>}{conversation.assigneeName && <em className="conversation-assignee"><i />{conversation.assigneeName} atendendo</em>}</span></span><time>{formatTime(conversation.lastMessageAt)}{conversation.unreadCount > 0 && <b aria-label={`${conversation.unreadCount} ${conversation.unreadCount === 1 ? "mensagem não lida" : "mensagens não lidas"}`}>{conversation.unreadCount}</b>}</time></button>; }
 function Brand() { return <div className="brand"><img src="/karrer-logo.png" alt="Karrer & Advogados" /></div>; }
 function Avatar({ name, imageUrl, online, size = "md" }: { name: string | null; imageUrl?: string | null; online?: boolean; size?: "xs" | "sm" | "md" }) { const [failed, setFailed] = useState(false); useEffect(() => setFailed(false), [imageUrl]); return <div className={`avatar ${size}`}>{imageUrl && !failed ? <img src={imageUrl} alt={`Foto de ${name ?? "usuário"}`} loading="lazy" onError={() => setFailed(true)} /> : initials(name)}{online && <i />}</div>; }
 function ClassificationBadge({ value }: { value: Classification }) { return <span className={`badge ${value}`}>Lead {classificationLabel[value].toLowerCase()}</span>; }

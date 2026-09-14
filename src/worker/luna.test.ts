@@ -149,10 +149,11 @@ describe("atendimento autônomo da Luna", () => {
   });
 
   it("responde apenas a mensagem recebida em conversa sem responsável", () => {
-    expect(shouldReplyAutonomously(message, { assigneeId: null, serviceStatus: "new" })).toBe(true);
-    expect(shouldReplyAutonomously(message, { assigneeId: "user-1", serviceStatus: "in_progress" })).toBe(false);
-    expect(shouldReplyAutonomously(message, { assigneeId: null, serviceStatus: "resolved" })).toBe(false);
-    expect(shouldReplyAutonomously({ ...message, direction: "outbound" }, { assigneeId: null, serviceStatus: "new" })).toBe(false);
+    expect(shouldReplyAutonomously(message, { assigneeId: null, serviceStatus: "new", lunaAutonomousEnabled: 1 })).toBe(true);
+    expect(shouldReplyAutonomously(message, { assigneeId: null, serviceStatus: "new", lunaAutonomousEnabled: 0 })).toBe(false);
+    expect(shouldReplyAutonomously(message, { assigneeId: "user-1", serviceStatus: "in_progress", lunaAutonomousEnabled: 1 })).toBe(false);
+    expect(shouldReplyAutonomously(message, { assigneeId: null, serviceStatus: "resolved", lunaAutonomousEnabled: 1 })).toBe(false);
+    expect(shouldReplyAutonomously({ ...message, direction: "outbound" }, { assigneeId: null, serviceStatus: "new", lunaAutonomousEnabled: 1 })).toBe(false);
   });
 
   it("monta uma resposta identificada, limitada e sem ferramentas por padrão", () => {

@@ -22,6 +22,7 @@ async function mockDashboard(
     bank: "Banco Exemplo", stage: "Documentação", classification: "hot", score: 86, lastMessage: "Enviei os documentos",
     lastMessageType: "text", lastMessageAt: now, unreadCount: 2, online: false, lastSeenAt: now, waitingSince: now, serviceStatus: "new", assigneeId: "admin-1", assigneeName: "Ana Karrer", avatarUrl: "/karrer-logo.png",
     firstResponseMinutes: 5.1, firstResponderId: "admin-1", firstResponderName: "Ana Karrer",
+    lunaAutonomousEnabled: false,
   }];
   const contacts = [{
     id: "contact-1", phone: "5592999999999", name: "Maria Oliveira", cpf: null, rg: null, rgIssuer: null,
@@ -61,8 +62,14 @@ async function mockDashboard(
       const conversationId = path.split("/").at(-2)!;
       const input = route.request().postDataJSON() as { userId: string | null };
       const assignee = users.find((item) => item.id === input.userId) ?? null;
-      conversationOverrides.set(conversationId, { ...(conversationOverrides.get(conversationId) ?? {}), assigneeId: assignee?.id ?? null, assigneeName: assignee?.name ?? null });
+      conversationOverrides.set(conversationId, { ...(conversationOverrides.get(conversationId) ?? {}), assigneeId: assignee?.id ?? null, assigneeName: assignee?.name ?? null, ...(assignee ? { lunaAutonomousEnabled: false } : {}) });
       body = { ok: true, assigneeName: assignee?.name ?? null };
+    }
+    else if (/\/api\/conversations\/[^/]+\/luna$/.test(path) && route.request().method() === "PATCH") {
+      const conversationId = path.split("/").at(-2)!;
+      const input = route.request().postDataJSON() as { enabled: boolean };
+      conversationOverrides.set(conversationId, { ...(conversationOverrides.get(conversationId) ?? {}), lunaAutonomousEnabled: input.enabled, ...(input.enabled ? { assigneeId: null, assigneeName: null } : {}) });
+      body = { ok: true, lunaAutonomousEnabled: input.enabled };
     }
     else if (/\/api\/conversations\/[^/]+\/status$/.test(path) && route.request().method() === "PATCH") {
       const conversationId = path.split("/").at(-2)!;
@@ -198,6 +205,25 @@ test("lista de leads exibe somente 20 registros por página", async ({ page }) =
   await expect(rows).toHaveCount(1);
   await expect(page.getByText("Mostrando 1–1 de 1 leads")).toBeVisible();
   await expect(page.getByText("Página 1 de 1")).toBeVisible();
+  await expectNoHorizontalOverflow(page);
+});
+
+test("administrador autoriza a Luna por conversa e atendimento humano a desativa", async ({ page }) => {
+  await mockDashboard(page);
+  await page.goto("/");
+  await page.getByRole("button", { name: /Maria Oliveira/ }).click();
+
+  page.once("dialog", (dialog) => dialog.accept());
+  await page.getByRole("button", { name: "Ativar atendimento da Luna" }).click();
+  await expect(page.getByRole("button", { name: "Desativar atendimento da Luna" })).toBeVisible();
+  await expect(page.getByText("Luna ativa").first()).toBeVisible();
+  await expect(page.locator(".conversation-assignee")).toHaveCount(0);
+
+  await page.getByRole("button", { name: "Direcionar atendimento" }).click();
+  await page.getByRole("option", { name: "João Lima" }).click();
+  await expect(page.getByRole("button", { name: "Ativar atendimento da Luna" })).toBeVisible();
+  await expect(page.locator(".conversation-luna")).toHaveCount(0);
+  await expect(page.locator(".conversation-assignee")).toContainText("João Lima atendendo");
   await expectNoHorizontalOverflow(page);
 });
 

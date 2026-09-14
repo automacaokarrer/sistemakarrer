@@ -31,6 +31,7 @@ interface ConversationRow {
   firstResponseMinutes: number | null;
   firstResponderId: string | null;
   firstResponderName: string | null;
+  lunaAutonomousEnabled: number;
 }
 
 export interface MessageRow {
@@ -56,6 +57,7 @@ const firstResponseJoins = `LEFT JOIN messages firstInbound ON firstInbound.id =
 const conversationSelect = `SELECT c.id, c.contact_id AS contactId, c.created_at AS createdAt, COALESCE(ct.name, ct.phone) AS name,
   ct.phone, ct.bank, c.stage, c.classification, c.score, c.last_message_at AS lastMessageAt,
   c.unread_count AS unreadCount, c.online, c.last_seen_at AS lastSeenAt, c.waiting_since AS waitingSince, c.service_status AS serviceStatus, c.assignee_id AS assigneeId, u.name AS assigneeName,
+  c.luna_autonomous_enabled AS lunaAutonomousEnabled,
   ROUND((julianday(firstReply.created_at) - julianday(firstInbound.created_at)) * 1440, 2) AS firstResponseMinutes,
   firstReply.sender_user_id AS firstResponderId, responder.name AS firstResponderName,
   (SELECT m.body FROM messages m WHERE m.conversation_id = c.id ORDER BY m.created_at DESC, m.id DESC LIMIT 1) AS lastMessage,
@@ -99,7 +101,7 @@ export async function listConversations(env: AppEnv, url: URL): Promise<Response
   const query = `${conversationSelect} WHERE c.id IN (${selected}) ORDER BY COALESCE(c.last_message_at, c.created_at) DESC`;
   const prepared = env.DB.prepare(query);
   const result = await (bindings.length ? prepared.bind(...bindings) : prepared).all<ConversationRow>();
-  return json({ conversations: result.results.map((row) => ({ ...row, name: row.name ?? row.phone, online: Boolean(row.online), avatarUrl: `/api/contacts/${row.contactId}/avatar` })) });
+  return json({ conversations: result.results.map((row) => ({ ...row, name: row.name ?? row.phone, online: Boolean(row.online), lunaAutonomousEnabled: Boolean(row.lunaAutonomousEnabled), avatarUrl: `/api/contacts/${row.contactId}/avatar` })) });
 }
 
 export async function getContactAvatar(env: AppEnv, contactId: string): Promise<Response> {
@@ -160,7 +162,7 @@ export async function markConversationRead(env: AppEnv, user: SessionUser, conve
   const readResult = await env.DB.prepare("UPDATE conversations SET unread_count = 0, waiting_since = NULL, service_status = CASE WHEN service_status = 'new' THEN 'in_progress' ELSE service_status END, updated_at = ?1 WHERE id = ?2")
     .bind(updatedAt, conversationId).run();
   if (!readResult.meta.changes) throw new HttpError("Conversa não encontrada.", 404);
-  const assignmentResult = await env.DB.prepare("UPDATE conversations SET assignee_id = ?1, updated_at = ?2 WHERE id = ?3 AND assignee_id IS NULL")
+  const assignmentResult = await env.DB.prepare("UPDATE conversations SET assignee_id = ?1, luna_autonomous_enabled = 0, luna_enabled_by = NULL, luna_enabled_at = NULL, updated_at = ?2 WHERE id = ?3 AND assignee_id IS NULL")
     .bind(user.id, updatedAt, conversationId).run();
   const assignment = await env.DB.prepare("SELECT c.assignee_id AS assigneeId, c.service_status AS serviceStatus, u.name AS assigneeName FROM conversations c LEFT JOIN users u ON u.id = c.assignee_id WHERE c.id = ?1")
     .bind(conversationId).first<{ assigneeId: string; assigneeName: string | null; serviceStatus: ServiceStatus }>();
@@ -179,12 +181,34 @@ export async function updateConversationAssignee(request: Request, env: AppEnv, 
     if (!assignee) throw new HttpError("Selecione um atendente ativo com acesso ao chat.", 422);
     assigneeName = assignee.name;
   }
-  const result = await env.DB.prepare("UPDATE conversations SET assignee_id = ?1, updated_at = ?2 WHERE id = ?3")
+  const result = await env.DB.prepare(`UPDATE conversations SET assignee_id = ?1,
+    luna_autonomous_enabled = CASE WHEN ?1 IS NOT NULL THEN 0 ELSE luna_autonomous_enabled END,
+    luna_enabled_by = CASE WHEN ?1 IS NOT NULL THEN NULL ELSE luna_enabled_by END,
+    luna_enabled_at = CASE WHEN ?1 IS NOT NULL THEN NULL ELSE luna_enabled_at END,
+    updated_at = ?2 WHERE id = ?3`)
     .bind(assigneeId, new Date().toISOString(), conversationId).run();
   if (!result.meta.changes) throw new HttpError("Conversa não encontrada.", 404);
   await audit(env, user, "conversation.assign", "conversation", conversationId, { assigneeId });
   await env.CHAT_ROOMS.getByName(INBOX_ROOM).broadcast({ type: "conversation.updated", conversationId });
   return json({ ok: true, assigneeName });
+}
+
+export async function updateConversationLuna(request: Request, env: AppEnv, user: SessionUser, conversationId: string): Promise<Response> {
+  const input = await readJson<{ enabled?: unknown }>(request);
+  if (typeof input.enabled !== "boolean") throw new HttpError("Informe se a Luna deve atender esta conversa.", 422);
+  const conversation = await env.DB.prepare("SELECT service_status AS serviceStatus FROM conversations WHERE id = ?1")
+    .bind(conversationId).first<{ serviceStatus: ServiceStatus }>();
+  if (!conversation) throw new HttpError("Conversa não encontrada.", 404);
+  if (input.enabled && conversation.serviceStatus === "resolved") throw new HttpError("Reabra a conversa antes de ativar a Luna.", 409);
+  const updatedAt = new Date().toISOString();
+  await env.DB.prepare(`UPDATE conversations SET luna_autonomous_enabled = ?1,
+    luna_enabled_by = ?2, luna_enabled_at = ?3,
+    assignee_id = CASE WHEN ?1 = 1 THEN NULL ELSE assignee_id END,
+    updated_at = ?4 WHERE id = ?5`)
+    .bind(input.enabled ? 1 : 0, input.enabled ? user.id : null, input.enabled ? updatedAt : null, updatedAt, conversationId).run();
+  await audit(env, user, input.enabled ? "conversation.luna.enable" : "conversation.luna.disable", "conversation", conversationId);
+  await env.CHAT_ROOMS.getByName(INBOX_ROOM).broadcast({ type: "conversation.updated", conversationId });
+  return json({ ok: true, lunaAutonomousEnabled: input.enabled, assigneeId: input.enabled ? null : undefined, assigneeName: input.enabled ? null : undefined });
 }
 
 export async function updateConversationStatus(request: Request, env: AppEnv, user: SessionUser, conversationId: string,
