@@ -741,11 +741,13 @@ function MessageBubble({ message, onImageOpen }: { message: Message; onImageOpen
 }
 
 function LeadsPage({ currentUserId, conversations, onOpen, onRefresh }: { currentUserId: string; conversations: Conversation[]; onOpen: (id: string) => void; onRefresh: () => Promise<void> }) {
+  const leadsPerPage = 20;
   const [filter, setFilter] = useState<"all" | Classification>("all");
   const [search, setSearch] = useState("");
   const [period, setPeriod] = useState<"7" | "30" | "90" | "all">("30");
   const [attendant, setAttendant] = useState("all");
   const [entryTime, setEntryTime] = useState<"all" | "morning" | "afternoon" | "evening">("all");
+  const [page, setPage] = useState(1);
   const [entryTimeModal, setEntryTimeModal] = useState(false);
   const [team, setTeam] = useState<LeadAttendant[]>([]);
   useEffect(() => {
@@ -794,6 +796,14 @@ function LeadsPage({ currentUserId, conversations, onOpen, onRefresh }: { curren
   });
   const normalizedSearch = search.trim().toLocaleLowerCase("pt-BR");
   const leads = periodLeads.filter((item) => (filter === "all" || item.classification === filter) && `${item.name} ${item.phone} ${item.stage} ${item.assigneeName ?? ""}`.toLocaleLowerCase("pt-BR").includes(normalizedSearch));
+  const totalPages = Math.max(1, Math.ceil(leads.length / leadsPerPage));
+  const currentPage = Math.min(page, totalPages);
+  const firstLeadIndex = (currentPage - 1) * leadsPerPage;
+  const visibleLeads = leads.slice(firstLeadIndex, firstLeadIndex + leadsPerPage);
+  useEffect(() => setPage(1), [filter, search, period, attendant, entryTime]);
+  useEffect(() => {
+    if (page > totalPages) setPage(totalPages);
+  }, [page, totalPages]);
   const metrics = {
     total: periodLeads.length,
     hot: periodLeads.filter((item) => item.classification === "hot").length,
@@ -862,8 +872,16 @@ function LeadsPage({ currentUserId, conversations, onOpen, onRefresh }: { curren
       <div className="leads-table">
         <div className="table-toolbar"><div className="chips"><Chip active={filter === "all"} onClick={() => setFilter("all")}>Todos</Chip>{(["hot", "warm", "cold"] as Classification[]).map((value) => <Chip key={value} active={filter === value} onClick={() => setFilter(value)}>{classificationLabel[value]}s</Chip>)}</div><SearchBox value={search} onChange={setSearch} placeholder="Buscar lead" /></div>
         <div className="lead-row lead-head"><span>Nome</span><span>Telefone</span><span>Classificação</span><span>Etapa</span><span>Último contato</span><span>Responsável</span><span /></div>
-        {leads.map((lead) => <div className="lead-row" key={lead.id} onDoubleClick={() => onOpen(lead.id)}><span className="person"><Avatar name={lead.name} size="xs" /><strong>{lead.name}</strong></span><span data-label="Telefone">{formatBrazilianPhone(lead.phone)}</span><span data-label="Classificação"><select aria-label={`Classificação de ${lead.name}`} className={`classification-select ${lead.classification}`} value={lead.classification} onChange={(event) => void updateClassification(lead.id, event.target.value as Classification)}><option value="hot">Quente</option><option value="warm">Morno</option><option value="cold">Frio</option></select></span><span data-label="Etapa">{lead.stage}</span><span data-label="Último contato">{formatTime(lead.lastMessageAt)}</span><span data-label="Responsável">{lead.assigneeName ?? "Não atribuído"}</span><button aria-label={`Abrir ficha de ${lead.name}`} onClick={() => onOpen(lead.id)}>Abrir ficha <span>→</span></button></div>)}
+        {visibleLeads.map((lead) => <div className="lead-row" key={lead.id} onDoubleClick={() => onOpen(lead.id)}><span className="person"><Avatar name={lead.name} size="xs" /><strong>{lead.name}</strong></span><span data-label="Telefone">{formatBrazilianPhone(lead.phone)}</span><span data-label="Classificação"><select aria-label={`Classificação de ${lead.name}`} className={`classification-select ${lead.classification}`} value={lead.classification} onChange={(event) => void updateClassification(lead.id, event.target.value as Classification)}><option value="hot">Quente</option><option value="warm">Morno</option><option value="cold">Frio</option></select></span><span data-label="Etapa">{lead.stage}</span><span data-label="Último contato">{formatTime(lead.lastMessageAt)}</span><span data-label="Responsável">{lead.assigneeName ?? "Não atribuído"}</span><button aria-label={`Abrir ficha de ${lead.name}`} onClick={() => onOpen(lead.id)}>Abrir ficha <span>→</span></button></div>)}
         {leads.length === 0 && <Empty text={search || filter !== "all" || attendant !== "all" || entryTime !== "all" ? "Nenhum lead corresponde aos filtros." : "Nenhum lead neste período."} />}
+        {leads.length > 0 && <nav className="leads-pagination" aria-label="Paginação de leads">
+          <span>Mostrando {firstLeadIndex + 1}–{Math.min(firstLeadIndex + leadsPerPage, leads.length)} de {leads.length} leads</span>
+          <div>
+            <button type="button" aria-label="Página anterior" disabled={currentPage === 1} onClick={() => setPage((value) => Math.max(1, value - 1))}>Anterior</button>
+            <strong>Página {currentPage} de {totalPages}</strong>
+            <button type="button" aria-label="Próxima página" disabled={currentPage === totalPages} onClick={() => setPage((value) => Math.min(totalPages, value + 1))}>Próxima</button>
+          </div>
+        </nav>}
       </div>
       {entryTimeModal && <Modal title="Hora de entrada" subtitle="Filtre os leads pelo horário em que chegaram ao atendimento." onClose={() => setEntryTimeModal(false)}><div className="attendant-picker">{([
         ["all", "Todos os horários", "Exibir leads recebidos durante todo o dia"],

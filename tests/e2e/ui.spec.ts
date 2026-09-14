@@ -154,6 +154,53 @@ test("painel principal abre todos os módulos autorizados", async ({ page }, tes
   await expectNoHorizontalOverflow(page);
 });
 
+test("lista de leads exibe somente 20 registros por página", async ({ page }) => {
+  await mockDashboard(page, () => Array.from({ length: 24 }, (_, index) => ({
+    id: `conversation-${index + 2}`,
+    contactId: `contact-${index + 2}`,
+    createdAt: now,
+    name: `Lead paginação ${String(index + 1).padStart(2, "0")}`,
+    phone: `55929${String(10000000 + index)}`,
+    bank: null,
+    stage: "Primeiro contato",
+    classification: "warm",
+    score: 50,
+    lastMessage: "Olá",
+    lastMessageType: "text",
+    lastMessageAt: now,
+    unreadCount: 0,
+    online: false,
+    lastSeenAt: null,
+    waitingSince: null,
+    serviceStatus: "new",
+    assigneeId: null,
+    assigneeName: null,
+    avatarUrl: null,
+    firstResponseMinutes: null,
+    firstResponderId: null,
+    firstResponderName: null,
+  })));
+  await page.goto("/");
+  await page.getByRole("button", { name: "Leads" }).click();
+
+  const rows = page.locator(".lead-row:not(.lead-head)");
+  await expect(rows).toHaveCount(20);
+  await expect(page.getByText("Mostrando 1–20 de 25 leads")).toBeVisible();
+  await expect(page.getByText("Página 1 de 2")).toBeVisible();
+  await expect(page.getByRole("button", { name: "Página anterior" })).toBeDisabled();
+
+  await page.getByRole("button", { name: "Próxima página" }).click();
+  await expect(rows).toHaveCount(5);
+  await expect(page.getByText("Mostrando 21–25 de 25 leads")).toBeVisible();
+  await expect(page.getByText("Página 2 de 2")).toBeVisible();
+
+  await page.getByPlaceholder("Buscar lead").fill("Maria Oliveira");
+  await expect(rows).toHaveCount(1);
+  await expect(page.getByText("Mostrando 1–1 de 1 leads")).toBeVisible();
+  await expect(page.getByText("Página 1 de 1")).toBeVisible();
+  await expectNoHorizontalOverflow(page);
+});
+
 test("média da primeira resposta muda conforme o atendente", async ({ page }, testInfo) => {
   await mockDashboard(page, () => [{
     id: "conversation-2", contactId: "contact-2", createdAt: now, name: "Contato de João", phone: "5592888888888",

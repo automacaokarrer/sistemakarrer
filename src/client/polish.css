@@ -417,6 +417,12 @@ input:focus, select:focus, textarea:focus { border-color: #9b805e !important; bo
 .leads-page .classification-select { width: 92px; padding-inline: 9px; border-radius: 6px; }
 .leads-page .leads-table > .empty { min-height: 92px; padding: 13px; gap: 5px; font-size: 12px; }
 .leads-page .leads-table > .empty svg { width: 24px; height: 24px; }
+.leads-pagination { display: flex; align-items: center; justify-content: space-between; gap: 16px; min-width: 960px; padding: 12px 18px; border-top: 1px solid #d6d0c7; color: #6f675e; font-size: 11px; }
+.leads-pagination > div { display: flex; align-items: center; gap: 12px; }
+.leads-pagination strong { color: #2d2925; font-size: 11px; font-weight: 600; }
+.leads-pagination button { min-width: 76px; padding: 7px 12px; border: 1px solid #cfc8bb; border-radius: 7px; background: #fff; color: #3d3832; font-size: 11px; cursor: pointer; }
+.leads-pagination button:hover:not(:disabled) { border-color: #b88629; background: #fff8e9; }
+.leads-pagination button:disabled { opacity: .45; cursor: default; }
 .attendant-picker { display: grid; gap: 8px; }
 .attendant-picker > button { display: grid; grid-template-columns: 36px 1fr auto; align-items: center; gap: 10px; width: 100%; padding: 11px 13px; border: 1px solid #e5ded4; border-radius: 11px; background: #fff; color: #302c28; text-align: left; cursor: pointer; }
 .attendant-picker > button:hover, .attendant-picker > button.selected { border-color: #c69a43; background: #faf5ea; }
@@ -470,6 +476,9 @@ input:focus, select:focus, textarea:focus { border-color: #9b805e !important; bo
   .leads-page .lead-row > span[data-label]::before { color: #8b8378; font-size: 8px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; content: attr(data-label); }
   .leads-page .lead-row > button { grid-column: 1 / -1; min-height: 36px; border-radius: 8px; background: #292929; color: #fff; font-size: 11px; }
   .leads-page .lead-row > button::after { content: none; }
+  .leads-pagination { align-items: stretch; flex-direction: column; min-width: 0; padding: 10px 0 0; border-top: 0; text-align: center; }
+  .leads-pagination > div { justify-content: space-between; gap: 8px; }
+  .leads-pagination button { flex: 1; min-height: 38px; }
 }
 
 @media (max-width: 420px) {
