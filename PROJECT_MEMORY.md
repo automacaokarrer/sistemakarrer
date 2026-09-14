@@ -21,8 +21,8 @@ Este arquivo registra decisões, estado de produção e procedimentos importante
 - D1: `karrer-atendimento-db`.
 - R2: `karrer-atendimento-media`.
 - Durable Object: `ChatRoom`.
-- Última versão Cloudflare validada nesta data: `c1d95ba6-8c7a-4a70-8ff6-5aea2d7736a4`.
-- Commit de código correspondente: `9126b87`.
+- Última versão Cloudflare validada nesta data: `44cb1fd4-9961-4ce6-9cfe-1793817715ea`.
+- Commit de código correspondente: `5a66b36`.
 - O endpoint protegido do webhook Z-API respondeu corretamente após o deploy.
 
 ## Funcionalidades implementadas
@@ -34,6 +34,7 @@ Este arquivo registra decisões, estado de produção e procedimentos importante
 - Presença online da equipe baseada na atividade das sessões.
 - Avatares privados armazenados no R2.
 - Chat, gestão e classificação de leads.
+- Cada conversa pode receber várias etiquetas operacionais pelo chat. O catálogo inicial possui: Novo contato, Em análise, Aguardando documentos, Documentos recebidos, Aguardando contrato, Contrato enviado, Contrato assinado, Aguardando pagamento, Retorno agendado e Sem interesse. As etiquetas atuais aparecem no cabeçalho da conversa; inclusões e remoções ficam em histórico imutável no D1 com usuário e horário, geram auditoria e são transmitidas em tempo real. As rotas exigem permissão de Chat.
 - Atualização do chat em tempo real por WebSocket global e por conversa, com heartbeat e reconexão automática; novas conversas e mensagens aparecem sem atualizar a página.
 - O histórico abre com as 40 mensagens mais recentes e carrega blocos anteriores automaticamente ao rolar para o topo, preservando a posição de leitura. Mensagens novas só deslocam a tela quando o atendente já está próximo do fim.
 - Envio pelo chat de imagens JPG/PNG/WebP, documentos PDF/Office/CSV/TXT de até 10 MB e áudios gravados no navegador, com armazenamento privado no R2 e envio em Base64 pela Z-API.
@@ -122,7 +123,7 @@ npm.cmd run test:e2e
 npm.cmd run build
 ```
 
-Último resultado registrado: 64 testes unitários e 28 cenários E2E aprovados em desktop e Pixel 7, incluindo duração da primeira resposta em horas/minutos por lead, classificação automática, paginação, colagem de prints e chat em tempo real; typecheck e build aprovados.
+Último resultado registrado: 65 testes unitários e 30 cenários E2E aprovados em desktop e Pixel 7, incluindo etiquetas e histórico por conversa, duração da primeira resposta em horas/minutos por lead, classificação automática, paginação, colagem de prints e chat em tempo real; typecheck e build aprovados.
 
 ## Migrações e deploy
 
@@ -135,6 +136,7 @@ npm.cmd run build
 - A migration `0009_luna_token_metrics.sql` adiciona `cached_input_tokens` e um índice de métricas de uso para medir economia de cache; ela está aplicada no D1 local e remoto.
 - As migrations `0010_luna_autonomous_replies.sql` e `0011_luna_conversation_control.sql` estão aplicadas no D1 local e remoto. A `0011` adiciona a autorização individual, o administrador que a concedeu, o horário e um índice parcial; todos os registros existentes receberam `0` por padrão.
 - A migration `0012_backfill_automatic_lead_classification.sql` está aplicada no D1 remoto e reclassifica apenas os leads antigos cuja `classification_source` continua `automatic`; decisões manuais permanecem intactas.
+- A migration `0013_conversation_tags.sql` está aplicada no D1 remoto e cria o catálogo de etiquetas, os vínculos ativos por conversa e o histórico imutável de inclusão e remoção.
 
 ### Runbook de deploy no Cloudflare
 
@@ -266,3 +268,4 @@ Deploy e push são operações diferentes: o deploy publica os arquivos locais n
 - A colagem de prints no compositor foi publicada na versão `21e27d43-7158-41cf-b00d-cbb642b9bd45`, correspondente ao commit de código `105b3d1`. Ao colar uma imagem JPG, PNG ou WebP com `Ctrl + V`, o chat abre a prévia existente antes do envio e mantém o upload pela rota autenticada; a dica visível também informa `Enter`, `Shift + Enter` e `Ctrl + V`. A validação passou por 54 testes unitários, 28 E2E em desktop/celular, typecheck e build; não havia migrações pendentes. A página pública e `/api/auth/status` responderam HTTP 200, o HTML referenciou `index-BIiJk966.js` e `index-DWSHVX3N.css`, e o Chromium não encontrou overflow horizontal no viewport móvel. Nenhuma mensagem ou imagem real foi enviada durante a validação.
 - A classificação automática pela conversa foi publicada na versão `e587ff84-c559-4b83-9bb4-746175eed074`, correspondente ao commit de código `7dd40cd`. O Worker recalcula os leads automáticos após cada mensagem recebida usando sinais determinísticos de interesse do cliente nas 30 mensagens mais recentes, sem custo adicional da Luna, transmite a mudança em tempo real e não sobrescreve classificações manuais. A migration `0012` corrigiu o histórico: a consulta agregada posterior mostrou 17 leads automáticos frios, 21 mornos e nenhum quente; as três classificações manuais permaneceram duas quentes e uma morna. A validação passou por 61 testes unitários, 28 E2E em desktop/celular, typecheck e build; não restaram migrations pendentes. A página pública e `/api/auth/status` responderam HTTP 200, e o Chromium mostrou a tela esperada sem overflow horizontal em 412 px. Próximo passo operacional: observar a próxima mensagem real e confirmar a mudança correspondente na lista sem editar manualmente o lead.
 - A exibição do tempo de primeira resposta por lead foi publicada na versão `c1d95ba6-8c7a-4a70-8ff6-5aea2d7736a4`, correspondente ao commit de código `9126b87`. Cada conversa continua contribuindo com um único intervalo entre a primeira mensagem recebida e a primeira resposta válida; as médias gerais e por atendente agora são identificadas explicitamente como médias por lead. Durações a partir de 60 minutos aparecem em horas e minutos, por exemplo `279 min` como `4h 39min`; abaixo de uma hora continuam em minutos. A validação passou por 64 testes unitários, 28 E2E em desktop/celular, typecheck e build; não havia migrations pendentes. A página pública e `/api/auth/status` responderam HTTP 200, o HTML referenciou `index-D_5utDhS.js` e `index-DWSHVX3N.css`, e o Chromium não encontrou overflow horizontal em 412 px.
+- As etiquetas com histórico por conversa foram publicadas na versão `44cb1fd4-9961-4ce6-9cfe-1793817715ea`, correspondente ao commit de código `5a66b36`. A migration `0013` está aplicada no D1 remoto, sem migrações pendentes, e o catálogo possui 10 etiquetas ativas. A interface permite várias etiquetas simultâneas, mostra as ativas no cabeçalho e registra inclusão ou remoção com responsável e horário; as mudanças também atualizam outras sessões em tempo real. A validação passou por 65 testes unitários, 30 E2E em desktop/celular, typecheck e build. A página pública e `/api/auth/status` responderam HTTP 200, o HTML referenciou `index-DbX4GNZ3.js` e `index-BG1W1PuV.css`, e o Chromium mostrou a tela de login sem overflow horizontal em 412 px. Nenhuma etiqueta de conversa real foi alterada durante a validação.
