@@ -21,8 +21,8 @@ Este arquivo registra decisões, estado de produção e procedimentos importante
 - D1: `karrer-atendimento-db`.
 - R2: `karrer-atendimento-media`.
 - Durable Object: `ChatRoom`.
-- Última versão Cloudflare validada nesta data: `21e27d43-7158-41cf-b00d-cbb642b9bd45`.
-- Commit de código correspondente: `105b3d1`.
+- Última versão Cloudflare validada nesta data: `e587ff84-c559-4b83-9bb4-746175eed074`.
+- Commit de código correspondente: `7dd40cd`.
 - O endpoint protegido do webhook Z-API respondeu corretamente após o deploy.
 
 ## Funcionalidades implementadas
@@ -46,7 +46,7 @@ Este arquivo registra decisões, estado de produção e procedimentos importante
 - Ao abrir uma conversa, o contador de mensagens não lidas é zerado no banco e desaparece em tempo real para a equipe. Novas mensagens recebidas incrementam novamente o contador.
 - A primeira pessoa que abre uma conversa ainda sem responsável assume o atendimento; o nome do atendente aparece em um badge na lista e a atribuição é transmitida em tempo real.
 - A foto de perfil do contato é consultada pela Z-API, copiada para o R2 privado e renovada a cada sete dias. Quando indisponível por privacidade ou ausência de foto, a interface usa as iniciais.
-- Filtros, métricas e exportação CSV de leads. A lista filtrada é paginada em blocos de 20 registros, volta à primeira página quando busca, período, atendente, classificação ou horário mudam e informa o intervalo exibido.
+- Filtros, métricas e exportação CSV de leads. A lista filtrada é paginada em blocos de 20 registros, volta à primeira página quando busca, período, atendente, classificação ou horário mudam e informa o intervalo exibido. Após cada mensagem recebida, os leads com origem `automatic` são recalculados como Frio, Morno ou Quente a partir dos sinais de interesse nas 30 mensagens mais recentes do cliente; intenção de contratação, descrição do caso, perguntas, documentos, mídia e pedido de encerramento influenciam a pontuação. Classificações manuais nunca são sobrescritas e o recálculo não consome tokens da Luna.
 - Cadastro completo de clientes e preenchimento de endereço por CEP.
 - Edição de clientes a partir da lista do Cadastro, inclusive contatos incompletos recebidos pelo WhatsApp: o formulário carrega os dados e envia `PATCH /api/contacts/:id` com permissão `clients`; contatos e classificação da conversa são atualizados em lote no D1, com verificação de CPF/telefone duplicados, auditoria e aviso em tempo real.
 - Upload de até 10 documentos por cliente, máximo de 10 MB por arquivo e 16 MB no total.
@@ -122,7 +122,7 @@ npm.cmd run test:e2e
 npm.cmd run build
 ```
 
-Último resultado registrado: 29 testes unitários e 20 cenários E2E aprovados em desktop e Pixel 7, incluindo recuperação de conversas sem evento WebSocket, média da primeira resposta e presença/carga de atendimento por usuário; typecheck e build aprovados. Neste ambiente o runner Playwright precisou ser interrompido após imprimir todos os resultados porque o servidor de desenvolvimento permaneceu aberto.
+Último resultado registrado: 61 testes unitários e 28 cenários E2E aprovados em desktop e Pixel 7, incluindo classificação automática de leads, proteção da classificação manual, paginação, colagem de prints e chat em tempo real; typecheck e build aprovados.
 
 ## Migrações e deploy
 
@@ -134,6 +134,7 @@ npm.cmd run build
 - Todas as migrations até `0008_luna_ai.sql` estão aplicadas no D1 remoto; a lista remota não mostrou migrations pendentes após o deploy da integração Luna.
 - A migration `0009_luna_token_metrics.sql` adiciona `cached_input_tokens` e um índice de métricas de uso para medir economia de cache; ela está aplicada no D1 local e remoto.
 - As migrations `0010_luna_autonomous_replies.sql` e `0011_luna_conversation_control.sql` estão aplicadas no D1 local e remoto. A `0011` adiciona a autorização individual, o administrador que a concedeu, o horário e um índice parcial; todos os registros existentes receberam `0` por padrão.
+- A migration `0012_backfill_automatic_lead_classification.sql` está aplicada no D1 remoto e reclassifica apenas os leads antigos cuja `classification_source` continua `automatic`; decisões manuais permanecem intactas.
 
 ### Runbook de deploy no Cloudflare
 
@@ -263,3 +264,4 @@ Deploy e push são operações diferentes: o deploy publica os arquivos locais n
 - A lista de Leads passou a exibir no máximo 20 registros por página, com intervalo, total, página atual e botões Anterior/Próxima; qualquer mudança de busca ou filtro reinicia a navegação. O ajuste foi publicado na versão `07248a13-d4b0-4849-8297-e176838ecf7e`, correspondente ao commit de código `427640f`. Passou por 52 testes unitários, 24 E2E em desktop/celular, typecheck e build; não havia migrações pendentes. A página pública e `/api/auth/status` responderam HTTP 200, o Chromium carregou `index-s2cOQxow.js` e `index-QBVx7Kss.css`, mostrou a tela de login e não apresentou overflow horizontal no viewport móvel.
 - O controle individual do atendimento autônomo foi publicado na versão `47b4a45f-9477-45f8-ab4e-77735b3b18db`, correspondente ao commit de código `6d254fd`. Somente administradores veem e podem usar o botão; a ativação exige confirmação, aparece na lista e é removida automaticamente quando um humano assume. A trava geral ficou `true`, mas uma consulta ao D1 antes e depois do deploy confirmou `0` conversas autorizadas, portanto nenhuma mensagem automática foi disparada. A migration `0011` está aplicada e não restaram migrations pendentes. A validação passou por 54 testes unitários, 26 E2E em desktop/celular, typecheck e build; a página pública e `/api/auth/status` responderam HTTP 200, a nova rota respondeu HTTP 401 sem sessão, o Chromium carregou `index-fmBok68Z.js` e `index-DWSHVX3N.css` e não apresentou overflow horizontal no viewport móvel. Próximo passo operacional: o administrador pode autorizar uma conversa de teste com destinatário consentido; não ativar contatos reais indiscriminadamente.
 - A colagem de prints no compositor foi publicada na versão `21e27d43-7158-41cf-b00d-cbb642b9bd45`, correspondente ao commit de código `105b3d1`. Ao colar uma imagem JPG, PNG ou WebP com `Ctrl + V`, o chat abre a prévia existente antes do envio e mantém o upload pela rota autenticada; a dica visível também informa `Enter`, `Shift + Enter` e `Ctrl + V`. A validação passou por 54 testes unitários, 28 E2E em desktop/celular, typecheck e build; não havia migrações pendentes. A página pública e `/api/auth/status` responderam HTTP 200, o HTML referenciou `index-BIiJk966.js` e `index-DWSHVX3N.css`, e o Chromium não encontrou overflow horizontal no viewport móvel. Nenhuma mensagem ou imagem real foi enviada durante a validação.
+- A classificação automática pela conversa foi publicada na versão `e587ff84-c559-4b83-9bb4-746175eed074`, correspondente ao commit de código `7dd40cd`. O Worker recalcula os leads automáticos após cada mensagem recebida usando sinais determinísticos de interesse do cliente nas 30 mensagens mais recentes, sem custo adicional da Luna, transmite a mudança em tempo real e não sobrescreve classificações manuais. A migration `0012` corrigiu o histórico: a consulta agregada posterior mostrou 17 leads automáticos frios, 21 mornos e nenhum quente; as três classificações manuais permaneceram duas quentes e uma morna. A validação passou por 61 testes unitários, 28 E2E em desktop/celular, typecheck e build; não restaram migrations pendentes. A página pública e `/api/auth/status` responderam HTTP 200, e o Chromium mostrou a tela esperada sem overflow horizontal em 412 px. Próximo passo operacional: observar a próxima mensagem real e confirmar a mudança correspondente na lista sem editar manualmente o lead.
