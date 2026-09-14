@@ -21,8 +21,8 @@ Este arquivo registra decisões, estado de produção e procedimentos importante
 - D1: `karrer-atendimento-db`.
 - R2: `karrer-atendimento-media`.
 - Durable Object: `ChatRoom`.
-- Última versão Cloudflare validada nesta data: `e587ff84-c559-4b83-9bb4-746175eed074`.
-- Commit de código correspondente: `7dd40cd`.
+- Última versão Cloudflare validada nesta data: `c1d95ba6-8c7a-4a70-8ff6-5aea2d7736a4`.
+- Commit de código correspondente: `9126b87`.
 - O endpoint protegido do webhook Z-API respondeu corretamente após o deploy.
 
 ## Funcionalidades implementadas
@@ -122,7 +122,7 @@ npm.cmd run test:e2e
 npm.cmd run build
 ```
 
-Último resultado registrado: 61 testes unitários e 28 cenários E2E aprovados em desktop e Pixel 7, incluindo classificação automática de leads, proteção da classificação manual, paginação, colagem de prints e chat em tempo real; typecheck e build aprovados.
+Último resultado registrado: 64 testes unitários e 28 cenários E2E aprovados em desktop e Pixel 7, incluindo duração da primeira resposta em horas/minutos por lead, classificação automática, paginação, colagem de prints e chat em tempo real; typecheck e build aprovados.
 
 ## Migrações e deploy
 
@@ -265,3 +265,4 @@ Deploy e push são operações diferentes: o deploy publica os arquivos locais n
 - O controle individual do atendimento autônomo foi publicado na versão `47b4a45f-9477-45f8-ab4e-77735b3b18db`, correspondente ao commit de código `6d254fd`. Somente administradores veem e podem usar o botão; a ativação exige confirmação, aparece na lista e é removida automaticamente quando um humano assume. A trava geral ficou `true`, mas uma consulta ao D1 antes e depois do deploy confirmou `0` conversas autorizadas, portanto nenhuma mensagem automática foi disparada. A migration `0011` está aplicada e não restaram migrations pendentes. A validação passou por 54 testes unitários, 26 E2E em desktop/celular, typecheck e build; a página pública e `/api/auth/status` responderam HTTP 200, a nova rota respondeu HTTP 401 sem sessão, o Chromium carregou `index-fmBok68Z.js` e `index-DWSHVX3N.css` e não apresentou overflow horizontal no viewport móvel. Próximo passo operacional: o administrador pode autorizar uma conversa de teste com destinatário consentido; não ativar contatos reais indiscriminadamente.
 - A colagem de prints no compositor foi publicada na versão `21e27d43-7158-41cf-b00d-cbb642b9bd45`, correspondente ao commit de código `105b3d1`. Ao colar uma imagem JPG, PNG ou WebP com `Ctrl + V`, o chat abre a prévia existente antes do envio e mantém o upload pela rota autenticada; a dica visível também informa `Enter`, `Shift + Enter` e `Ctrl + V`. A validação passou por 54 testes unitários, 28 E2E em desktop/celular, typecheck e build; não havia migrações pendentes. A página pública e `/api/auth/status` responderam HTTP 200, o HTML referenciou `index-BIiJk966.js` e `index-DWSHVX3N.css`, e o Chromium não encontrou overflow horizontal no viewport móvel. Nenhuma mensagem ou imagem real foi enviada durante a validação.
 - A classificação automática pela conversa foi publicada na versão `e587ff84-c559-4b83-9bb4-746175eed074`, correspondente ao commit de código `7dd40cd`. O Worker recalcula os leads automáticos após cada mensagem recebida usando sinais determinísticos de interesse do cliente nas 30 mensagens mais recentes, sem custo adicional da Luna, transmite a mudança em tempo real e não sobrescreve classificações manuais. A migration `0012` corrigiu o histórico: a consulta agregada posterior mostrou 17 leads automáticos frios, 21 mornos e nenhum quente; as três classificações manuais permaneceram duas quentes e uma morna. A validação passou por 61 testes unitários, 28 E2E em desktop/celular, typecheck e build; não restaram migrations pendentes. A página pública e `/api/auth/status` responderam HTTP 200, e o Chromium mostrou a tela esperada sem overflow horizontal em 412 px. Próximo passo operacional: observar a próxima mensagem real e confirmar a mudança correspondente na lista sem editar manualmente o lead.
+- A exibição do tempo de primeira resposta por lead foi publicada na versão `c1d95ba6-8c7a-4a70-8ff6-5aea2d7736a4`, correspondente ao commit de código `9126b87`. Cada conversa continua contribuindo com um único intervalo entre a primeira mensagem recebida e a primeira resposta válida; as médias gerais e por atendente agora são identificadas explicitamente como médias por lead. Durações a partir de 60 minutos aparecem em horas e minutos, por exemplo `279 min` como `4h 39min`; abaixo de uma hora continuam em minutos. A validação passou por 64 testes unitários, 28 E2E em desktop/celular, typecheck e build; não havia migrations pendentes. A página pública e `/api/auth/status` responderam HTTP 200, o HTML referenciou `index-D_5utDhS.js` e `index-DWSHVX3N.css`, e o Chromium não encontrou overflow horizontal em 412 px.
