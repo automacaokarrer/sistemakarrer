@@ -390,6 +390,27 @@ test("ícone de imagem envia arquivo pelo compositor", async ({ page }) => {
   await expect(page.getByRole("button", { name: "Gravar áudio" })).toBeEnabled();
 });
 
+test("print colado no compositor cria uma prévia e pode ser enviado", async ({ page }) => {
+  await mockDashboard(page);
+  await page.goto("/");
+  await page.getByRole("button", { name: /Maria Oliveira/ }).click();
+  await expect(page.getByText("Enter envia · Shift + Enter quebra linha · Ctrl + V cola print", { exact: true })).toBeVisible();
+
+  await page.getByLabel("Mensagem").evaluate((element) => {
+    const clipboard = new DataTransfer();
+    clipboard.items.add(new File([new Uint8Array([137, 80, 78, 71])], "print-colado.png", { type: "image/png" }));
+    element.dispatchEvent(new ClipboardEvent("paste", { bubbles: true, cancelable: true, clipboardData: clipboard }));
+  });
+
+  const preview = page.getByRole("region", { name: "Prévia do arquivo" });
+  await expect(preview).toBeVisible();
+  await expect(preview.getByAltText("Prévia da imagem")).toBeVisible();
+  await expect(preview).toContainText("print-colado.png");
+  await page.getByRole("button", { name: "Enviar arquivo" }).click();
+  await expect(page.locator('img[alt="Imagem de teste"]')).toBeVisible();
+  await expectNoHorizontalOverflow(page);
+});
+
 test("Enter envia a mensagem e Shift + Enter cria uma nova linha", async ({ page }) => {
   await mockDashboard(page);
   const sentBodies: string[] = [];
@@ -404,7 +425,7 @@ test("Enter envia a mensagem e Shift + Enter cria uma nova linha", async ({ page
   });
   await page.goto("/");
   await page.getByRole("button", { name: /Maria Oliveira/ }).click();
-  await expect(page.getByText("Enter envia · Shift + Enter quebra linha", { exact: true })).toBeVisible();
+  await expect(page.getByText("Enter envia · Shift + Enter quebra linha · Ctrl + V cola print", { exact: true })).toBeVisible();
   const composer = page.getByLabel("Mensagem");
   await composer.fill("Primeira linha");
   await composer.press("Shift+Enter");

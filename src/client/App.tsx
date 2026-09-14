@@ -28,7 +28,7 @@ import {
   Users,
   X,
 } from "lucide-react";
-import { FocusEvent, FormEvent, useCallback, useEffect, useRef, useState } from "react";
+import { ClipboardEvent, FocusEvent, FormEvent, useCallback, useEffect, useRef, useState } from "react";
 import { api, formatTime, initials } from "./api";
 import type { AuthStatus, Classification, Contact, Conversation, LeadAttendant, ManagedUser, Message, Permissions, ServiceStatus, User } from "./types";
 
@@ -658,6 +658,22 @@ function ConversationPanel({ conversation, attendants, canAssign, assigning, upd
     setSendError("");
   }
 
+  function pasteImage(event: ClipboardEvent<HTMLTextAreaElement>) {
+    const item = Array.from(event.clipboardData.items).find((entry) => entry.kind === "file" && entry.type.startsWith("image/"));
+    if (!item) return;
+    event.preventDefault();
+    const pasted = item.getAsFile();
+    if (!pasted) return;
+    const extensions: Record<string, string> = { "image/jpeg": "jpg", "image/png": "png", "image/webp": "webp" };
+    const extension = extensions[pasted.type];
+    if (!extension) {
+      setSendError("O print colado precisa estar em JPG, PNG ou WebP.");
+      return;
+    }
+    const file = new File([pasted], pasted.name || `print-${Date.now()}.${extension}`, { type: pasted.type, lastModified: Date.now() });
+    stageAttachment(file, "image");
+  }
+
   async function toggleRecording() {
     if (recording) { recorderRef.current?.stop(); return; }
     setSendError("");
@@ -724,8 +740,8 @@ function ConversationPanel({ conversation, attendants, canAssign, assigning, upd
         <input ref={imageInputRef} className="composer-file-input" type="file" accept="image/jpeg,image/png,image/webp" onChange={(event) => { const file = event.target.files?.[0]; if (file) stageAttachment(file, "image"); event.currentTarget.value = ""; }} />
         <button type="button" title="Anexar documento" aria-label="Anexar documento" disabled={uploadingMedia} onClick={() => documentInputRef.current?.click()}><Paperclip size={20} /></button><button type="button" title="Enviar imagem" aria-label="Enviar imagem" disabled={uploadingMedia} onClick={() => imageInputRef.current?.click()}><Image size={19} /></button>
         <div className="composer-message-field">
-          <textarea aria-label="Mensagem" aria-describedby="composer-shortcut" value={text} onChange={(event) => setText(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); event.currentTarget.form?.requestSubmit(); } }} placeholder="Escreva uma mensagem" rows={1} />
-          <small id="composer-shortcut">Enter envia · Shift + Enter quebra linha</small>
+          <textarea aria-label="Mensagem" aria-describedby="composer-shortcut" value={text} onChange={(event) => setText(event.target.value)} onPaste={pasteImage} onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); event.currentTarget.form?.requestSubmit(); } }} placeholder="Escreva uma mensagem" rows={1} />
+          <small id="composer-shortcut">Enter envia · Shift + Enter quebra linha · Ctrl + V cola print</small>
         </div>
         <button type={text.trim() && !recording ? "submit" : "button"} className={`send-button ${recording ? "recording" : ""}`} disabled={sending} onClick={text.trim() && !recording ? undefined : (event) => { event.preventDefault(); void toggleRecording(); }} aria-label={recording ? "Parar gravação" : text.trim() ? "Enviar" : "Gravar áudio"}>{recording ? <Mic size={19} /> : text.trim() ? <Send size={19} /> : <Mic size={19} />}</button>
       </form>
