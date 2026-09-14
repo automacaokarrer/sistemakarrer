@@ -26,6 +26,7 @@ import { createUser, deleteUser, getUserAvatar, listLeadAttendants, listUsers, r
 import { uploadContactDocuments } from "./drive";
 import { INBOX_ROOM } from "./realtime";
 import { handleLunaRequest } from "./luna";
+import { listConversationTags, updateConversationTag } from "./tags";
 
 function withCookie(payload: unknown, cookie: string, status = 200): Response {
   return json(payload, { status, headers: { "Set-Cookie": cookie } });
@@ -172,6 +173,16 @@ async function routeApi(request: Request, env: AppEnv, ctx: ExecutionContext): P
   if (conversationStatus && method === "PATCH") {
     requirePermission(user, "chat");
     return updateConversationStatus(request, env, user, conversationStatus[1], ctx);
+  }
+
+  const conversationTags = routeMatch(pathname, /^\/api\/conversations\/([^/]+)\/tags$/);
+  if (conversationTags && method === "GET") {
+    requirePermission(user, "chat");
+    return listConversationTags(env, conversationTags[1]);
+  }
+  if (conversationTags && method === "PATCH") {
+    requirePermission(user, "chat");
+    return updateConversationTag(request, env, user, conversationTags[1]);
   }
 
   if (method === "GET" && pathname === "/api/conversations/ws") {

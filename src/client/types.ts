@@ -82,6 +82,25 @@ export interface Message {
   createdAt: string;
 }
 
+export interface LeadTag {
+  id: string;
+  name: string;
+  color: string;
+  selected: boolean;
+  assignedAt: string | null;
+  assignedByName: string | null;
+}
+
+export interface LeadTagHistory {
+  id: string;
+  tagId: string;
+  name: string;
+  color: string;
+  action: "added" | "removed";
+  actorName: string;
+  createdAt: string;
+}
+
 export interface Contact {
   id: string;
   phone: string;

@@ -17,6 +17,12 @@ async function mockDashboard(
 ) {
   const user = { id: "admin-1", name: "Ana Karrer", email: "ana@karrer.test", role: "admin", avatarUrl: null, professionalRole: "Administradora", permissions };
   const conversationOverrides = new Map<string, Record<string, unknown>>();
+  const availableTags = [
+    { id: "tag-waiting-contract", name: "Aguardando contrato", color: "#9b6a35" },
+    { id: "tag-contract-signed", name: "Contrato assinado", color: "#3e7c4a" },
+  ];
+  const selectedTags = new Set<string>();
+  const tagHistory: Array<Record<string, unknown>> = [];
   const conversations = [{
     id: "conversation-1", contactId: "contact-1", createdAt: now, name: "Maria Oliveira", phone: "5592999999999",
     bank: "Banco Exemplo", stage: "Documentação", classification: "hot", score: 86, lastMessage: "Enviei os documentos",
@@ -76,6 +82,17 @@ async function mockDashboard(
       const input = route.request().postDataJSON() as { status: string };
       conversationOverrides.set(conversationId, { ...(conversationOverrides.get(conversationId) ?? {}), serviceStatus: input.status });
       body = { ok: true, status: input.status };
+    }
+    else if (/\/api\/conversations\/[^/]+\/tags$/.test(path)) {
+      if (route.request().method() === "PATCH") {
+        const input = route.request().postDataJSON() as { tagId: string; active: boolean };
+        if (input.active) selectedTags.add(input.tagId); else selectedTags.delete(input.tagId);
+        const tag = availableTags.find((item) => item.id === input.tagId)!;
+        tagHistory.unshift({ id: `history-${tagHistory.length + 1}`, tagId: tag.id, name: tag.name, color: tag.color,
+          action: input.active ? "added" : "removed", actorName: "Ana Karrer", createdAt: now });
+      }
+      body = { tags: availableTags.map((tag) => ({ ...tag, selected: selectedTags.has(tag.id), assignedAt: selectedTags.has(tag.id) ? now : null,
+        assignedByName: selectedTags.has(tag.id) ? "Ana Karrer" : null })), history: tagHistory };
     }
     else if (path.endsWith("/media") && route.request().method() === "POST") body = { message: { id: "message-upload", conversationId: "conversation-1", direction: "outbound", type: "image", body: "Imagem de teste", fileName: "foto.png", mediaKey: "uploads/test/foto.png", duration: null, status: "sent", createdAt: now } };
     else if (path.endsWith("/messages")) body = messagePage(requestUrl);
@@ -224,6 +241,25 @@ test("administrador autoriza a Luna por conversa e atendimento humano a desativa
   await expect(page.getByRole("button", { name: "Ativar atendimento da Luna" })).toBeVisible();
   await expect(page.locator(".conversation-luna")).toHaveCount(0);
   await expect(page.locator(".conversation-assignee")).toContainText("João Lima atendendo");
+  await expectNoHorizontalOverflow(page);
+});
+
+test("etiquetas do chat mantêm histórico de inclusão e remoção", async ({ page }) => {
+  await mockDashboard(page);
+  await page.goto("/");
+  await page.getByRole("button", { name: /Maria Oliveira/ }).click();
+  await page.getByRole("button", { name: "Gerenciar etiquetas" }).click();
+  const modal = page.getByRole("dialog", { name: "Etiquetas do lead" });
+  await expect(modal).toBeVisible();
+  const waitingContract = modal.getByRole("button", { name: "Aguardando contrato" });
+  await waitingContract.click();
+  await expect(waitingContract).toHaveAttribute("aria-pressed", "true");
+  await expect(modal).toContainText("Adicionada por Ana Karrer");
+  await page.getByRole("button", { name: "Fechar" }).click();
+  await expect(page.getByLabel("Etiquetas ativas")).toContainText("Aguardando contrato");
+  await page.getByRole("button", { name: "Gerenciar etiquetas" }).click();
+  await modal.getByRole("button", { name: "Aguardando contrato" }).click();
+  await expect(modal).toContainText("Removida por Ana Karrer");
   await expectNoHorizontalOverflow(page);
 });
 

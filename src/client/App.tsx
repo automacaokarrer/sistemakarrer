@@ -13,7 +13,6 @@ import {
   LogOut,
   KeyRound,
   Mail,
-  Menu,
   MessageCircle,
   Mic,
   Paperclip,
@@ -24,13 +23,14 @@ import {
   Send,
   Settings,
   ShieldCheck,
+  Tag,
   Trash2,
   Users,
   X,
 } from "lucide-react";
 import { ClipboardEvent, FocusEvent, FormEvent, useCallback, useEffect, useRef, useState } from "react";
 import { api, formatResponseDuration, formatTime, initials } from "./api";
-import type { AuthStatus, Classification, Contact, Conversation, LeadAttendant, ManagedUser, Message, Permissions, ServiceStatus, User } from "./types";
+import type { AuthStatus, Classification, Contact, Conversation, LeadAttendant, LeadTag, LeadTagHistory, ManagedUser, Message, Permissions, ServiceStatus, User } from "./types";
 
 type View = "chat" | "leads" | "clients" | "lead" | "settings";
 type ConversationFilter = "all" | "mine" | "unassigned" | "unread" | "hot";
@@ -463,6 +463,10 @@ function ConversationPanel({ conversation, attendants, canAssign, assigning, upd
   const [pendingAttachment, setPendingAttachment] = useState<{ file: File; kind: "image" | "audio" | "document"; previewUrl: string | null; duration?: number } | null>(null);
   const [openImage, setOpenImage] = useState<{ url: string; alt: string; downloadUrl: string } | null>(null);
   const [sendError, setSendError] = useState("");
+  const [tagData, setTagData] = useState<{ tags: LeadTag[]; history: LeadTagHistory[] }>({ tags: [], history: [] });
+  const [tagModal, setTagModal] = useState(false);
+  const [tagBusy, setTagBusy] = useState<string | null>(null);
+  const [tagError, setTagError] = useState("");
   const endRef = useRef<HTMLDivElement>(null);
   const messagesRef = useRef<HTMLDivElement>(null);
   const loadingOlderRef = useRef(false);
@@ -525,7 +529,13 @@ function ConversationPanel({ conversation, attendants, canAssign, assigning, upd
     });
   }, [conversation.id]);
 
+  const loadTags = useCallback(async () => {
+    const data = await api<{ tags: LeadTag[]; history: LeadTagHistory[] }>(`/api/conversations/${conversation.id}/tags`);
+    setTagData(data);
+  }, [conversation.id]);
+
   useEffect(() => void loadMessages(), [loadMessages]);
+  useEffect(() => { setTagModal(false); setTagError(""); void loadTags().catch(() => setTagData({ tags: [], history: [] })); }, [loadTags]);
   useEffect(() => {
     const refresh = () => void syncRecentMessages().catch(() => undefined);
     document.addEventListener("visibilitychange", refresh);
@@ -592,6 +602,7 @@ function ConversationPanel({ conversation, attendants, canAssign, assigning, upd
           if (data.type === "message.status" && data.messageId && data.status) {
             setMessages((current) => current.map((message) => message.id === data.messageId ? { ...message, status: data.status! } : message));
           }
+          if (data.type === "conversation.tags") void loadTags().catch(() => undefined);
         } catch { /* mensagens de controle são ignoradas */ }
       };
       socket.onclose = () => {
@@ -612,7 +623,22 @@ function ConversationPanel({ conversation, attendants, canAssign, assigning, upd
       clearHeartbeat();
       socket?.close(1000, "conversation changed");
     };
-  }, [conversation.id, syncRecentMessages]);
+  }, [conversation.id, loadTags, syncRecentMessages]);
+
+  async function toggleTag(tag: LeadTag) {
+    if (tagBusy) return;
+    setTagBusy(tag.id);
+    setTagError("");
+    try {
+      const data = await api<{ tags: LeadTag[]; history: LeadTagHistory[] }>(`/api/conversations/${conversation.id}/tags`, {
+        method: "PATCH", body: JSON.stringify({ tagId: tag.id, active: !tag.selected }),
+      });
+      setTagData(data);
+      await onRefresh();
+    } catch (reason) {
+      setTagError(reason instanceof Error ? reason.message : "Não foi possível atualizar a etiqueta.");
+    } finally { setTagBusy(null); }
+  }
 
   async function sendMessage(event: FormEvent) {
     event.preventDefault();
@@ -701,17 +727,17 @@ function ConversationPanel({ conversation, attendants, canAssign, assigning, upd
   }, [pendingAttachment]);
 
   return (
-    <div className="conversation-panel">
+    <div className={`conversation-panel ${tagModal ? "modal-open" : ""}`}>
       <header className="chat-header">
         <button className="mobile-back" aria-label="Voltar às conversas" onClick={onBack}><ArrowLeft size={20} /></button>
         <Avatar name={conversation.name} imageUrl={conversation.avatarUrl} online={conversation.online} />
-        <div className="chat-contact"><h2>{conversation.name}</h2><p>{conversation.online ? <em>Online</em> : conversation.lastSeenAt ? `Visto por último ${new Date(conversation.lastSeenAt).toLocaleString("pt-BR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" })}` : "Visto por último indisponível"} <ClassificationBadge value={conversation.classification} /></p></div>
+        <div className="chat-contact"><div className="chat-contact-title"><h2>{conversation.name}</h2><button type="button" className="tag-button" aria-label="Gerenciar etiquetas" title="Gerenciar etiquetas" onClick={() => setTagModal(true)}><Tag size={15} /></button></div><p>{conversation.online ? <em>Online</em> : conversation.lastSeenAt ? `Visto por último ${new Date(conversation.lastSeenAt).toLocaleString("pt-BR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" })}` : "Visto por último indisponível"} <ClassificationBadge value={conversation.classification} /></p>{tagData.tags.some((tag) => tag.selected) && <div className="chat-tag-strip" aria-label="Etiquetas ativas">{tagData.tags.filter((tag) => tag.selected).slice(0, 3).map((tag) => <span className="chat-tag" style={{ backgroundColor: tag.color }} key={tag.id}>{tag.name}</span>)}{tagData.tags.filter((tag) => tag.selected).length > 3 && <span className="chat-tag-more">+{tagData.tags.filter((tag) => tag.selected).length - 3}</span>}</div>}</div>
         <div className={`chat-routing-controls ${canAssign ? "with-luna" : "solo"}`}>
           <CompactSelect className={`service-status-picker ${conversation.serviceStatus}`} label="Status do atendimento" value={conversation.serviceStatus} disabled={updatingStatus} options={Object.entries(serviceStatusLabel).map(([value, label]) => ({ value, label }))} onChange={(value) => void onStatus(value as ServiceStatus)} />
           {canAssign && <CompactSelect className="assignee-picker" label="Direcionar atendimento" value={conversation.assigneeId ?? ""} disabled={assigning} icon={<Users size={15} />} options={[{ value: "", label: "Não atribuído" }, ...attendants.map((attendant) => ({ value: attendant.id, label: attendant.name }))]} onChange={(value) => void onAssign(value)} />}
           {canAssign && <button type="button" className={`luna-control ${conversation.lunaAutonomousEnabled ? "active" : ""}`} aria-pressed={conversation.lunaAutonomousEnabled} aria-label={conversation.lunaAutonomousEnabled ? "Desativar atendimento da Luna" : "Ativar atendimento da Luna"} disabled={updatingLuna || (!conversation.lunaAutonomousEnabled && conversation.serviceStatus === "resolved")} onClick={() => void onToggleLuna()}><Bot size={16} /><span>{updatingLuna ? "Aguarde" : conversation.lunaAutonomousEnabled ? "Luna ativa" : "Ativar Luna"}</span></button>}
         </div>
-        <button className="primary" onClick={onOpenLead}>Ver ficha do lead</button><button className="icon-button"><Menu size={19} /></button>
+        <button className="primary" onClick={onOpenLead}>Ver ficha do lead</button>
         {actionError && <div className="chat-action-error" role="alert">{actionError}</div>}
       </header>
       <div ref={messagesRef} className="messages" onScroll={(event) => { if (event.currentTarget.scrollTop < 120) void loadOlderMessages(); }}>
@@ -750,6 +776,7 @@ function ConversationPanel({ conversation, attendants, canAssign, assigning, upd
         <button type="button" className="image-lightbox-close" aria-label="Fechar imagem" onClick={() => setOpenImage(null)}><X size={22} /></button>
         <img src={openImage.url} alt={openImage.alt} />
       </div>}
+      {tagModal && <Modal title="Etiquetas do lead" subtitle="Organize o atendimento. Toda alteração fica registrada no histórico." onClose={() => setTagModal(false)}><div className="tag-manager"><div className="tag-manager-grid">{tagData.tags.map((tag) => <button type="button" className="tag-choice" aria-pressed={tag.selected} disabled={Boolean(tagBusy)} onClick={() => void toggleTag(tag)} key={tag.id}><i style={{ backgroundColor: tag.color }} />{tag.name}{tag.selected && <Check size={13} />}</button>)}</div>{tagError && <p className="tag-manager-error" role="alert">{tagError}</p>}<h3>Histórico de alterações</h3><div className="tag-history">{tagData.history.map((entry) => <div className="tag-history-item" key={entry.id}><i style={{ backgroundColor: entry.color }} /><span><strong>{entry.name}</strong><small>{entry.action === "added" ? "Adicionada" : "Removida"} por {entry.actorName}</small></span><time>{new Date(entry.createdAt).toLocaleString("pt-BR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" })}</time></div>)}{!tagData.history.length && <p className="tag-history-empty">Nenhuma alteração registrada.</p>}</div></div></Modal>}
     </div>
   );
 }
