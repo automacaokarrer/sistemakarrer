@@ -21,8 +21,8 @@ Este arquivo registra decisões, estado de produção e procedimentos importante
 - D1: `karrer-atendimento-db`.
 - R2: `karrer-atendimento-media`.
 - Durable Object: `ChatRoom`.
-- Última versão Cloudflare validada nesta data: `94b6b710-2ca3-4d45-8e14-1722268d2a51`.
-- Commit de código correspondente: `bcd89e5`.
+- Última versão Cloudflare validada nesta data: `07248a13-d4b0-4849-8297-e176838ecf7e`.
+- Commit de código correspondente: `427640f`.
 - O endpoint protegido do webhook Z-API respondeu corretamente após o deploy.
 
 ## Funcionalidades implementadas
@@ -46,7 +46,7 @@ Este arquivo registra decisões, estado de produção e procedimentos importante
 - Ao abrir uma conversa, o contador de mensagens não lidas é zerado no banco e desaparece em tempo real para a equipe. Novas mensagens recebidas incrementam novamente o contador.
 - A primeira pessoa que abre uma conversa ainda sem responsável assume o atendimento; o nome do atendente aparece em um badge na lista e a atribuição é transmitida em tempo real.
 - A foto de perfil do contato é consultada pela Z-API, copiada para o R2 privado e renovada a cada sete dias. Quando indisponível por privacidade ou ausência de foto, a interface usa as iniciais.
-- Filtros, métricas e exportação CSV de leads.
+- Filtros, métricas e exportação CSV de leads. A lista filtrada é paginada em blocos de 20 registros, volta à primeira página quando busca, período, atendente, classificação ou horário mudam e informa o intervalo exibido.
 - Cadastro completo de clientes e preenchimento de endereço por CEP.
 - Edição de clientes a partir da lista do Cadastro, inclusive contatos incompletos recebidos pelo WhatsApp: o formulário carrega os dados e envia `PATCH /api/contacts/:id` com permissão `clients`; contatos e classificação da conversa são atualizados em lote no D1, com verificação de CPF/telefone duplicados, auditoria e aviso em tempo real.
 - Upload de até 10 documentos por cliente, máximo de 10 MB por arquivo e 16 MB no total.
@@ -259,3 +259,4 @@ Deploy e push são operações diferentes: o deploy publica os arquivos locais n
 - O compositor do chat já enviava com Enter e preservava quebra de linha com Shift + Enter; em 14 de setembro de 2026, essa regra ganhou uma instrução visível e proteção para não enviar durante composição de caracteres pelo teclado. O comportamento passou a ter cobertura E2E em desktop e celular e foi publicado na mesma versão `af807ccd-6ad2-4a34-a904-2337d95f1832`. Um seletor E2E antigo também foi tornado exato para eliminar ambiguidade entre as mensagens 40 e 408.
 - A ampliação de imagens do chat foi publicada na versão `ad9e483f-6603-4ab0-a718-5bb97a64a460`, correspondente ao commit `dbe6c95`. Imagens com mídia privada agora abrem em uma sobreposição responsiva e podem ser fechadas pelo botão, fundo ou Escape. A validação passou por 50 testes unitários, 22 E2E em desktop/celular, typecheck e build; a página pública e `/api/auth/status` responderam HTTP 200, o Chromium carregou os bundles `index-CFE3C65S.js` e `index-DVYCVhs7.css` e não encontrou overflow horizontal no viewport móvel.
 - O download autenticado das imagens ampliadas foi publicado na versão `94b6b710-2ca3-4d45-8e14-1722268d2a51`, correspondente ao commit `bcd89e5`. O botão `Baixar imagem` usa a rota privada já existente, força o arquivo como anexo, higieniza o nome e infere JPG/PNG/WebP pelo tipo real quando não há extensão. A validação passou por 52 testes unitários, 22 E2E em desktop/celular, typecheck e build. A página pública e `/api/auth/status` responderam HTTP 200, a rota de mídia recusou acesso sem sessão com HTTP 401, o Chromium carregou `index-C6MdRW1x.js` e `index-CWeZ94jA.css` e não encontrou overflow horizontal no viewport móvel.
+- A lista de Leads passou a exibir no máximo 20 registros por página, com intervalo, total, página atual e botões Anterior/Próxima; qualquer mudança de busca ou filtro reinicia a navegação. O ajuste foi publicado na versão `07248a13-d4b0-4849-8297-e176838ecf7e`, correspondente ao commit de código `427640f`. Passou por 52 testes unitários, 24 E2E em desktop/celular, typecheck e build; não havia migrações pendentes. A página pública e `/api/auth/status` responderam HTTP 200, o Chromium carregou `index-s2cOQxow.js` e `index-QBVx7Kss.css`, mostrou a tela de login e não apresentou overflow horizontal no viewport móvel.
