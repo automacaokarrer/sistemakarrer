@@ -304,6 +304,11 @@ test("ícone de imagem envia arquivo pelo compositor", async ({ page }) => {
   await expect(page.getByLabel("Mensagem")).toBeEditable();
   await page.getByRole("button", { name: "Enviar arquivo" }).click();
   await expect(page.locator('img[alt="Imagem de teste"]')).toBeVisible();
+  await page.getByRole("button", { name: "Abrir imagem em tamanho completo" }).click();
+  await expect(page.getByRole("dialog", { name: "Imagem em tamanho completo" })).toBeVisible();
+  await expect(page.getByRole("dialog", { name: "Imagem em tamanho completo" }).getByAltText("Imagem de teste")).toBeVisible();
+  await page.getByRole("button", { name: "Fechar imagem" }).click();
+  await expect(page.getByRole("dialog", { name: "Imagem em tamanho completo" })).toHaveCount(0);
   await expect(page.getByRole("button", { name: "Anexar documento" })).toBeEnabled();
   await expect(page.getByRole("button", { name: "Gravar áudio" })).toBeEnabled();
 });

@@ -579,6 +579,12 @@ input:focus, select:focus, textarea:focus { border-color: #9b805e !important; bo
 @keyframes recording-pulse { 50% { opacity: .65; } }
 .message-error { align-self: center; background: #fff0ed; color: #8c3b2e; border-radius: 8px; padding: 8px 12px; font-size: 12px; }
 .message-image { display: block; width: min(320px, 100%); max-height: 320px; object-fit: cover; border-radius: 8px; }
+.message-image-link { display: block; max-width: 100%; padding: 0; border: 0; border-radius: 8px; background: transparent; cursor: zoom-in; }
+.message-image-link:focus-visible { outline: 3px solid #d8b98f; outline-offset: 3px; }
+.image-lightbox { position: fixed; z-index: 250; inset: 0; display: grid; place-items: center; padding: 58px 22px 22px; background: rgb(12 11 10 / 92%); backdrop-filter: blur(8px); cursor: zoom-out; }
+.image-lightbox img { display: block; max-width: min(100%, 1400px); max-height: calc(100vh - 80px); border-radius: 10px; object-fit: contain; box-shadow: 0 24px 80px rgb(0 0 0 / 45%); cursor: default; }
+.image-lightbox-close { position: absolute; top: 16px; right: 18px; display: grid; place-items: center; width: 40px; height: 40px; padding: 0; border: 1px solid rgb(255 255 255 / 24%); border-radius: 50%; background: rgb(255 255 255 / 12%); color: #fff; }
+.image-lightbox-close:hover { background: rgb(255 255 255 / 22%); }
 .message-audio { display: block; max-width: min(320px, 100%); }
 .document-message { color: inherit; text-decoration: none; }
 .attachment-preview { display: flex; align-items: center; gap: 18px; padding: 12px 24px; border-top: 1px solid #d8d2c5; background: linear-gradient(135deg, #f3efe8, #e9e3da); box-shadow: 0 -8px 28px rgb(44 39 33 / 6%); }

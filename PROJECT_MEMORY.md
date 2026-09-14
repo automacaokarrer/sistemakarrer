@@ -38,6 +38,7 @@ Este arquivo registra decisões, estado de produção e procedimentos importante
 - O histórico abre com as 40 mensagens mais recentes e carrega blocos anteriores automaticamente ao rolar para o topo, preservando a posição de leitura. Mensagens novas só deslocam a tela quando o atendente já está próximo do fim.
 - Envio pelo chat de imagens JPG/PNG/WebP, documentos PDF/Office/CSV/TXT de até 10 MB e áudios gravados no navegador, com armazenamento privado no R2 e envio em Base64 pela Z-API.
 - Imagens e áudios possuem prévia antes do envio; o áudio pode ser ouvido e descartado. O compositor de texto permanece liberado durante gravação, prévia e upload de mídia.
+- Imagens já enviadas ou recebidas no chat podem ser abertas em tamanho completo em uma sobreposição responsiva, fechada pelo botão, pelo fundo ou pela tecla Escape.
 - A prévia de áudio usa um player próprio e responsivo, com ouvir/pausar, barra de progresso, tempo decorrido/total e ações claras para descartar ou enviar.
 - Confirmações de mensagem mudam em tempo real entre enviado, entregue e lido. O cabeçalho exibe presença e visto por último quando a Z-API fornece esses eventos.
 - Na administração, clicar em um usuário abre um modal de perfil com foto, função, presença, conta e permissões. Alterações de acessos continuam exclusivas do administrador mestre e protegidas pela API.
