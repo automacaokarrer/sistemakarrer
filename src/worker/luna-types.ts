@@ -25,6 +25,7 @@ export interface LunaAnalysis {
   memoryUpdates: string[];
   requiresHumanReview: boolean;
   confidence: number;
+  replyToClient: string | null;
 }
 
 export interface ValidatedLunaRequest {

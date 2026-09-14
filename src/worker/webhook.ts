@@ -5,6 +5,7 @@ import type { AppEnv, ZApiPayload } from "./types";
 import { normalizeIncoming, normalizeStatusUpdate, storeRemoteMedia } from "./zapi";
 import { INBOX_ROOM } from "./realtime";
 import { scheduleHumanConversationMemory } from "./luna-passive";
+import { scheduleAutonomousReply } from "./luna-autonomous";
 
 export function presencePhoneCandidates(phone: string): string[] {
   if (!phone.startsWith("55")) return [phone];
@@ -106,6 +107,8 @@ export async function handleZApiWebhook(request: Request, env: AppEnv, suppliedT
   if (message) await env.CHAT_ROOMS.getByName(conversation.id).broadcast({ type: "message.new", message });
   await env.CHAT_ROOMS.getByName(INBOX_ROOM).broadcast({ type: "conversation.updated", conversationId: conversation.id });
   scheduleHumanConversationMemory(env, ctx, { id: messageId, conversationId: conversation.id, direction: incoming.direction,
+    type: incoming.type, body: incoming.body, mediaKey, fileName: incoming.fileName, mime: incoming.mime, createdAt: incoming.createdAt });
+  scheduleAutonomousReply(env, ctx, { id: messageId, conversationId: conversation.id, direction: incoming.direction,
     type: incoming.type, body: incoming.body, mediaKey, fileName: incoming.fileName, mime: incoming.mime, createdAt: incoming.createdAt });
   return json({ ok: true }, { status: 201 });
 }

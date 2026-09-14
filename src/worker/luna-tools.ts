@@ -2,11 +2,11 @@ import type { FunctionTool, ResponseFunctionToolCall } from "openai/resources/re
 import { HttpError } from "./http";
 import { getAuthorizedFile, getClientContext, getClientDocuments, saveAnalysis, saveFact, savePendingItems } from "./luna-memory";
 import { lunaStatuses, type LunaAnalysis, type LunaStatus, type ValidatedLunaRequest } from "./luna-types";
-import type { AppEnv, SessionUser } from "./types";
+import type { AppEnv, LunaActor } from "./types";
 
 export interface LunaToolContext {
   env: AppEnv;
-  user: Pick<SessionUser, "id">;
+  user: LunaActor;
   request: ValidatedLunaRequest;
 }
 
@@ -109,6 +109,7 @@ export async function executeLunaTool(call: ResponseFunctionToolCall, context: L
         status: statusArg(args), contentType: request.inputType, documentType: textArg(args, "documentType", 100, false),
         summary: textArg(args, "summary", 1500)!, extractedData: record(args.extractedData ?? {}), problems: stringList(args, "problems"),
         pendingItems: stringList(args, "pendingItems"), memoryUpdates: [], requiresHumanReview: confidence < 0.7, confidence,
+        replyToClient: null,
       };
       await saveAnalysis(env, user, request, analysis, hash);
       return { saved: true };

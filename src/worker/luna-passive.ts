@@ -22,7 +22,7 @@ interface HumanConversationRow {
   serviceStatus: string;
 }
 
-interface RecentMessageRow {
+export interface RecentMessageRow {
   direction: string;
   type: string;
   body: string | null;
@@ -44,7 +44,7 @@ export function shouldAnalyzePassiveMessage(pendingCount: number, immediateAttac
   return force || immediateAttachment || (pendingCount >= 3 && pendingCount % 3 === 0);
 }
 
-function mediaInputType(message: PassiveMessage): LunaInputType | null {
+export function lunaInputTypeForMessage(message: PassiveMessage): LunaInputType | null {
   if (!message.mediaKey) return null;
   if (message.type === "image" && ["image/jpeg", "image/png", "image/webp"].includes(message.mime ?? "")) return "image";
   if (message.type === "audio" && (message.mime ?? "").startsWith("audio/")) return "audio_transcription";
@@ -58,9 +58,13 @@ function transcriptLine(message: RecentMessageRow): string {
   return `${speaker}: ${content.slice(0, 500)}`;
 }
 
+export function conversationExcerpt(recentMessages: RecentMessageRow[]): string {
+  return recentMessages.slice(-8).map(transcriptLine).join("\n").slice(-5_000);
+}
+
 export function buildPassiveLunaInput(message: PassiveMessage, clientId: string, recentMessages: RecentMessageRow[]): ValidatedLunaRequest {
-  const attachmentType = mediaInputType(message);
-  const transcript = recentMessages.slice(-8).map(transcriptLine).join("\n").slice(-5_000);
+  const attachmentType = lunaInputTypeForMessage(message);
+  const transcript = conversationExcerpt(recentMessages);
   const direction = message.direction === "inbound" ? "cliente" : "atendente humano";
   const text = [
     "Memória passiva do atendimento humano.",
@@ -98,7 +102,7 @@ async function captureHumanConversationMemory(env: AppEnv, message: PassiveMessa
         AND (s.through_message_at IS NULL OR m.created_at > s.through_message_at)`)
       .bind(message.conversationId, message.createdAt).first<{ count: number }>();
     const pendingCount = Number(pending?.count ?? 0);
-    const immediateAttachment = Boolean(mediaInputType(message));
+    const immediateAttachment = Boolean(lunaInputTypeForMessage(message));
     if (!shouldAnalyzePassiveMessage(pendingCount, immediateAttachment, options.force)) return;
     const recent = await env.DB.prepare(`SELECT direction, type, body, file_name AS fileName, created_at AS createdAt
       FROM messages WHERE conversation_id = ?1 AND created_at <= ?2 ORDER BY created_at DESC LIMIT 8`)

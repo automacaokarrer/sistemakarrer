@@ -15,6 +15,7 @@ Configuração:
 
 - `OPENAI_LUNA_AGENT_ID`: ID real da agente Luna, mantido como secret para não registrar o identificador no repositório.
 - `OPENAI_TRANSCRIPTION_MODEL`: modelo de transcrição; o padrão é `gpt-4o-mini-transcribe`.
+- `LUNA_AUTONOMOUS_ENABLED`: chave operacional textual. Somente o valor `true` habilita respostas automáticas; o padrão versionado é `false`.
 
 No desenvolvimento, os mesmos nomes ficam no `.env`, que é ignorado pelo Git. `npm run dev` sincroniza apenas os bindings permitidos para `.dev.vars`.
 
@@ -55,7 +56,8 @@ Resposta bem-sucedida:
     "pendingItems": ["contrato"],
     "memoryUpdates": ["Cliente informou que enviará o contrato amanhã."],
     "requiresHumanReview": false,
-    "confidence": 0.96
+    "confidence": 0.96,
+    "replyToClient": null
   }
 }
 ```
@@ -67,6 +69,22 @@ Erros da integração seguem `{ "success": false, "requestId": "...", "code": ".
 Quando uma conversa possui responsável e não está finalizada, a Luna trabalha em modo passivo. Mensagens recebidas e envios bem-sucedidos do atendente são analisados em segundo plano, sem atrasar o webhook nem o chat. A Luna atualiza fatos, pendências, análises de imagens/PDFs/áudios e um resumo acumulado no D1.
 
 O modo passivo não chama a Z-API, não insere mensagem de saída e não envia resposta ao cliente. Para reduzir custo, mensagens de texto são acumuladas e analisadas a cada três mensagens; imagens, PDFs e áudios continuam imediatos. A mudança para `waiting_customer` ou `resolved` força a atualização final do que ainda estiver pendente. O contexto usa no máximo as 8 mensagens recentes, com até 500 caracteres por mensagem, e o resumo só é substituído por uma análise correspondente à mesma mensagem ou a uma mensagem mais nova. Conversas sem responsável não disparam essa captura.
+
+## Atendimento autônomo
+
+Quando `LUNA_AUTONOMOUS_ENABLED=true`, uma mensagem recebida em conversa sem responsável pode acionar uma resposta da Luna. O webhook continua respondendo imediatamente e o processamento ocorre em segundo plano.
+
+O envio só acontece se, depois da análise, todas as condições continuarem verdadeiras:
+
+- a conversa segue sem responsável e não está finalizada;
+- a mensagem recebida ainda é a mais recente da conversa;
+- a execução ainda não foi processada para essa mesma mensagem;
+- a Luna não marcou a situação como dependente de revisão humana;
+- a resposta possui texto válido de até 2.000 caracteres.
+
+A tabela `luna_autonomous_replies` registra a reivindicação e o resultado por mensagem recebida para impedir duplicidade. A resposta é armazenada em `messages` sem `sender_user_id`, não entra na métrica de primeira resposta humana e é publicada nos WebSockets do chat. Se um atendente assumir ou responder enquanto a Luna analisa, o envio é descartado. Falhas são registradas sem expor o conteúdo da conversa.
+
+O modo permanece desligado durante desenvolvimento, migrations, deploy e validações técnicas. A ativação em produção exige decisão operacional explícita e deve ser acompanhada com uma conversa real autorizada; não use destinatários aleatórios nem mensagens artificiais para teste. Enquanto estiver desligado, `replyToClient` permanece `null` nas análises comuns e passivas.
 
 ## Controle de tokens e ferramentas
 

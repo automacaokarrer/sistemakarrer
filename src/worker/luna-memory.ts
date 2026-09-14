@@ -1,8 +1,6 @@
 import { HttpError } from "./http";
-import type { AppEnv, SessionUser } from "./types";
+import type { AppEnv, LunaActor } from "./types";
 import type { LunaAnalysis, LunaClientContext, LunaStatus, ValidatedLunaRequest } from "./luna-types";
-
-type LunaActor = Pick<SessionUser, "id">;
 
 type DocumentRow = { id: string; fileName: string; mime: string; mediaKey: string };
 
@@ -100,7 +98,7 @@ export async function findCachedAnalysis(env: AppEnv, clientId: string, fileKey:
     pendingItems: safeJson(String(row.pendingItems ?? "[]"), []),
     memoryUpdates: [],
     requiresHumanReview: Number(row.confidence) < 0.7 || row.status === "REVIEW_REQUIRED",
-    confidence: Number(row.confidence),
+    confidence: Number(row.confidence), replyToClient: null,
   };
 }
 

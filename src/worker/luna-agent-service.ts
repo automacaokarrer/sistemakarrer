@@ -5,7 +5,7 @@ import { getAuthorizedFile, getClientContext } from "./luna-memory";
 import { executeLunaTool, toolsForLunaRequest } from "./luna-tools";
 import { lunaInputTypes, lunaStatuses, type LunaAnalysis, type LunaInputType, type ValidatedLunaRequest } from "./luna-types";
 import { transcribeAudio } from "./transcription-service";
-import type { AppEnv, SessionUser } from "./types";
+import type { AppEnv, LunaActor } from "./types";
 
 const MAX_FILE_BYTES = 10 * 1024 * 1024;
 const MAX_TOOL_ROUNDS = 4;
@@ -25,7 +25,7 @@ export interface LunaServiceResult {
 const analysisSchema = {
   type: "object",
   additionalProperties: false,
-  required: ["status", "contentType", "documentType", "summary", "extractedData", "problems", "pendingItems", "memoryUpdates", "requiresHumanReview", "confidence"],
+  required: ["status", "contentType", "documentType", "summary", "extractedData", "problems", "pendingItems", "memoryUpdates", "requiresHumanReview", "confidence", "replyToClient"],
   properties: {
     status: { type: "string", enum: [...lunaStatuses] },
     contentType: { type: "string", enum: [...lunaInputTypes] },
@@ -37,6 +37,7 @@ const analysisSchema = {
     memoryUpdates: { type: "array", items: { type: "string", maxLength: 800 }, maxItems: 12 },
     requiresHumanReview: { type: "boolean" },
     confidence: { type: "number", minimum: 0, maximum: 1 },
+    replyToClient: { type: ["string", "null"], maxLength: 2000 },
   },
 };
 
@@ -57,25 +58,30 @@ function stringArray(value: unknown, limit: number, maxLength: number): string[]
   return result.every((item) => item && item.length <= maxLength) ? result : null;
 }
 
-export function validateLunaAnalysis(value: unknown, expectedType: LunaInputType): LunaAnalysis {
+export function validateLunaAnalysis(value: unknown, expectedType: LunaInputType, requireReply = false): LunaAnalysis {
   if (!value || typeof value !== "object" || Array.isArray(value)) throw new LunaServiceError("AI_INVALID_RESPONSE", "A Luna retornou uma resposta inválida.");
   const item = value as Record<string, unknown>;
   const problems = stringArray(item.problems, 20, 300);
   const pendingItems = stringArray(item.pendingItems, 20, 300);
   const memoryUpdates = stringArray(item.memoryUpdates, 12, 800);
   const confidence = Number(item.confidence);
+  const replyToClient = typeof item.replyToClient === "string" ? item.replyToClient.trim() : null;
+  const requiresHumanReview = item.requiresHumanReview === true || confidence < 0.7;
   if (!lunaStatuses.includes(item.status as LunaAnalysis["status"]) || item.contentType !== expectedType ||
     (item.documentType !== null && (typeof item.documentType !== "string" || item.documentType.length > 100)) ||
     typeof item.summary !== "string" || !item.summary.trim() || item.summary.length > 1500 ||
     !item.extractedData || typeof item.extractedData !== "object" || Array.isArray(item.extractedData) ||
     !problems || !pendingItems || !memoryUpdates || typeof item.requiresHumanReview !== "boolean" ||
-    !Number.isFinite(confidence) || confidence < 0 || confidence > 1) {
+    !Number.isFinite(confidence) || confidence < 0 || confidence > 1 ||
+    (item.replyToClient !== null && typeof item.replyToClient !== "string") || (replyToClient?.length ?? 0) > 2000 ||
+    (!requireReply && replyToClient !== null) || (requireReply && !requiresHumanReview && !replyToClient)) {
     throw new LunaServiceError("AI_INVALID_RESPONSE", "A Luna retornou uma resposta inválida.");
   }
   return {
     status: item.status as LunaAnalysis["status"], contentType: expectedType, documentType: item.documentType as string | null,
     summary: item.summary.trim(), extractedData: item.extractedData as Record<string, unknown>, problems, pendingItems, memoryUpdates,
-    requiresHumanReview: item.requiresHumanReview || confidence < 0.7, confidence,
+    requiresHumanReview, confidence,
+    replyToClient,
   };
 }
 
@@ -103,7 +109,7 @@ function mapOpenAIError(reason: unknown): LunaServiceError {
   return new LunaServiceError("AI_TEMPORARILY_UNAVAILABLE", "Não foi possível concluir a análise neste momento.", 503);
 }
 
-export async function runLunaAgent(env: AppEnv, user: Pick<SessionUser, "id">, input: ValidatedLunaRequest, requestId: string): Promise<LunaServiceResult> {
+export async function runLunaAgent(env: AppEnv, user: LunaActor, input: ValidatedLunaRequest, requestId: string): Promise<LunaServiceResult> {
   if (!env.OPENAI_API_KEY || !env.OPENAI_LUNA_AGENT_ID) throw new LunaServiceError("AI_NOT_CONFIGURED", "A Luna ainda não foi configurada pelo administrador.", 503);
   const client = new OpenAI({ apiKey: env.OPENAI_API_KEY, maxRetries: 1, timeout: 45_000 });
   try {
@@ -112,6 +118,7 @@ export async function runLunaAgent(env: AppEnv, user: Pick<SessionUser, "id">, i
       getClientContext(env, input.clientId, input.conversationId),
     ]);
     const passive = input.metadata.mode === "human_passive_memory";
+    const autonomousReply = input.metadata.mode === "autonomous_reply";
     const context = passive ? {
       ...fullContext,
       documents: { received: fullContext.documents.received.slice(0, 8), pending: fullContext.documents.pending.slice(0, 8) },
@@ -139,7 +146,10 @@ export async function runLunaAgent(env: AppEnv, user: Pick<SessionUser, "id">, i
     const passiveInstructions = passive
       ? " Você está em modo passivo porque um atendente humano conduz a conversa. Registre fatos, pendências e um resumo acumulado, mas jamais escreva uma mensagem para o cliente ou solicite o envio de resposta."
       : "";
-    const instructions = `${agent.instructions ?? ""}\n\nVocê é Luna dentro do CRM Karrer. Use somente o contexto fornecido e as ferramentas autorizadas. Não invente dados. Retorne uma análise curta no schema exigido. A memória permanente pertence ao D1 do CRM; não solicite nem reproduza raciocínio interno.${passiveInstructions}`;
+    const replyInstructions = autonomousReply
+      ? " Responda à última mensagem do cliente em replyToClient, de forma humana, curta e útil. Se a situação exigir revisão humana, defina requiresHumanReview como true e replyToClient como null. Não mencione análise, memória, ferramentas ou raciocínio interno."
+      : " Defina replyToClient como null.";
+    const instructions = `${agent.instructions ?? ""}\n\nVocê é Luna dentro do CRM Karrer. Use somente o contexto fornecido e as ferramentas autorizadas. Não invente dados. Retorne uma análise curta no schema exigido. A memória permanente pertence ao D1 do CRM; não solicite nem reproduza raciocínio interno.${passiveInstructions}${replyInstructions}`;
     const tools = toolsForLunaRequest(input);
     const common = {
       model: agent.model,
@@ -176,7 +186,7 @@ export async function runLunaAgent(env: AppEnv, user: Pick<SessionUser, "id">, i
     if (responseCalls(response).length) throw new LunaServiceError("AI_TOOL_LIMIT", "A Luna excedeu o limite seguro de ferramentas.");
     let parsed: unknown;
     try { parsed = JSON.parse(response.output_text); } catch { throw new LunaServiceError("AI_INVALID_RESPONSE", "A Luna retornou uma resposta inválida."); }
-    const analysis = validateLunaAnalysis(parsed, input.inputType);
+    const analysis = validateLunaAnalysis(parsed, input.inputType, autonomousReply);
     return {
       analysis, model: response.model || agent.model, toolCalls, fileHash,
       usage: { inputTokens: response.usage?.input_tokens ?? 0,

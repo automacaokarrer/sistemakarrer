@@ -48,6 +48,7 @@
     "APP_NAME": "Karrer Atendimento",
     "ENVIRONMENT": "production",
     "APP_BASE_URL": "https://crmkarrer.com.br",
-    "OPENAI_TRANSCRIPTION_MODEL": "gpt-4o-mini-transcribe"
+    "OPENAI_TRANSCRIPTION_MODEL": "gpt-4o-mini-transcribe",
+    "LUNA_AUTONOMOUS_ENABLED": "false"
   }
 }

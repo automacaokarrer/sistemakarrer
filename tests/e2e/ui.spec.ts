@@ -280,7 +280,7 @@ test("histórico carrega 40 mensagens e busca as anteriores ao rolar", async ({ 
   });
   await page.goto("/");
   await page.getByRole("button", { name: /Maria Oliveira/ }).click();
-  await expect(page.getByText("Mensagem recente 40")).toBeVisible();
+  await expect(page.getByText("Mensagem recente 40", { exact: true })).toBeVisible();
   expect(initialLimit).toBe("40");
 
   await page.locator(".messages").evaluate((element) => { element.scrollTop = 0; element.dispatchEvent(new Event("scroll")); });
@@ -306,6 +306,32 @@ test("ícone de imagem envia arquivo pelo compositor", async ({ page }) => {
   await expect(page.locator('img[alt="Imagem de teste"]')).toBeVisible();
   await expect(page.getByRole("button", { name: "Anexar documento" })).toBeEnabled();
   await expect(page.getByRole("button", { name: "Gravar áudio" })).toBeEnabled();
+});
+
+test("Enter envia a mensagem e Shift + Enter cria uma nova linha", async ({ page }) => {
+  await mockDashboard(page);
+  const sentBodies: string[] = [];
+  await page.route("**/api/conversations/conversation-1/messages", async (route) => {
+    if (route.request().method() !== "POST") return route.fallback();
+    const body = route.request().postDataJSON() as { body: string };
+    sentBodies.push(body.body);
+    await route.fulfill({ contentType: "application/json", body: JSON.stringify({ message: {
+      id: "keyboard-message", conversationId: "conversation-1", direction: "outbound", type: "text", body: body.body,
+      fileName: null, mediaKey: null, duration: null, status: "sent", createdAt: now,
+    } }) });
+  });
+  await page.goto("/");
+  await page.getByRole("button", { name: /Maria Oliveira/ }).click();
+  await expect(page.getByText("Enter envia · Shift + Enter quebra linha", { exact: true })).toBeVisible();
+  const composer = page.getByLabel("Mensagem");
+  await composer.fill("Primeira linha");
+  await composer.press("Shift+Enter");
+  await composer.type("Segunda linha");
+  await expect(composer).toHaveValue("Primeira linha\nSegunda linha");
+  expect(sentBodies).toHaveLength(0);
+  await composer.press("Enter");
+  await expect.poll(() => sentBodies).toEqual(["Primeira linha\nSegunda linha"]);
+  await expect(composer).toHaveValue("");
 });
 
 test("áudio pode ser ouvido antes do envio sem bloquear a escrita", async ({ page }, testInfo) => {

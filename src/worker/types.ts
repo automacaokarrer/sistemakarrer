@@ -8,6 +8,7 @@ export interface SecretBindings {
   OPENAI_API_KEY?: string;
   OPENAI_LUNA_AGENT_ID?: string;
   OPENAI_TRANSCRIPTION_MODEL?: string;
+  LUNA_AUTONOMOUS_ENABLED?: string;
   EMAIL_FROM?: string;
   APP_BASE_URL?: string;
   GOOGLE_SERVICE_ACCOUNT_EMAIL?: string;
@@ -32,6 +33,10 @@ export interface SessionUser {
   avatarUrl: string | null;
   professionalRole: string | null;
   permissions: Permissions;
+}
+
+export interface LunaActor {
+  id: string | null;
 }
 
 export interface Permissions {

@@ -4,6 +4,7 @@ import { runLunaAgent, validateLunaAnalysis } from "./luna-agent-service";
 import { validateLunaRequest } from "./luna";
 import { executeLunaTool, toolsForLunaRequest } from "./luna-tools";
 import { buildPassiveLunaInput, isHumanAttending, shouldAnalyzePassiveMessage } from "./luna-passive";
+import { autonomousRepliesEnabled, buildAutonomousLunaInput, shouldReplyAutonomously } from "./luna-autonomous";
 
 describe("entrada da Luna", () => {
   it("aceita texto e usa caseId como atendimento", () => {
@@ -25,7 +26,7 @@ describe("saída estruturada da Luna", () => {
   const valid = {
     status: "APPROVED", contentType: "text", documentType: null, summary: "Cliente enviará o contrato.",
     extractedData: {}, problems: [], pendingItems: ["contrato"], memoryUpdates: ["Cliente enviará o contrato."],
-    requiresHumanReview: false, confidence: 0.96,
+    requiresHumanReview: false, confidence: 0.96, replyToClient: null,
   };
 
   it("valida a resposta e força revisão abaixo de 0,70", () => {
@@ -35,6 +36,15 @@ describe("saída estruturada da Luna", () => {
   it("recusa tipo de conteúdo divergente e JSON incompleto", () => {
     expect(() => validateLunaAnalysis({ ...valid, contentType: "pdf" }, "text")).toThrow("resposta inválida");
     expect(() => validateLunaAnalysis({ status: "APPROVED" }, "text")).toThrow("resposta inválida");
+  });
+
+  it("exige texto de resposta apenas no modo autônomo", () => {
+    expect(() => validateLunaAnalysis(valid, "text", true)).toThrow("resposta inválida");
+    expect(validateLunaAnalysis({ ...valid, replyToClient: "Olá! Como posso ajudar?" }, "text", true).replyToClient)
+      .toBe("Olá! Como posso ajudar?");
+    expect(validateLunaAnalysis({ ...valid, requiresHumanReview: true }, "text", true).replyToClient).toBeNull();
+    expect(() => validateLunaAnalysis({ ...valid, replyToClient: "Não deveria responder." }, "text"))
+      .toThrow("resposta inválida");
   });
 });
 
@@ -122,5 +132,37 @@ describe("memória passiva durante atendimento humano", () => {
     expect(toolsForLunaRequest(request)).toHaveLength(0);
     expect(toolsForLunaRequest({ ...request, metadata: { toolMode: "crm" } }).length).toBeGreaterThan(0);
     expect(toolsForLunaRequest({ ...request, metadata: { toolMode: "crm", mode: "human_passive_memory" } })).toHaveLength(0);
+  });
+});
+
+describe("atendimento autônomo da Luna", () => {
+  const message = {
+    id: "message-auto-1", conversationId: "conversation-1", direction: "inbound" as const, type: "text",
+    body: "Quero entender como funciona o atendimento.", mediaKey: null, fileName: null, mime: null,
+    createdAt: "2026-09-14T12:00:00.000Z",
+  };
+
+  it("permanece desligado por padrão e exige ativação explícita", () => {
+    expect(autonomousRepliesEnabled({})).toBe(false);
+    expect(autonomousRepliesEnabled({ LUNA_AUTONOMOUS_ENABLED: "false" })).toBe(false);
+    expect(autonomousRepliesEnabled({ LUNA_AUTONOMOUS_ENABLED: " TRUE " })).toBe(true);
+  });
+
+  it("responde apenas a mensagem recebida em conversa sem responsável", () => {
+    expect(shouldReplyAutonomously(message, { assigneeId: null, serviceStatus: "new" })).toBe(true);
+    expect(shouldReplyAutonomously(message, { assigneeId: "user-1", serviceStatus: "in_progress" })).toBe(false);
+    expect(shouldReplyAutonomously(message, { assigneeId: null, serviceStatus: "resolved" })).toBe(false);
+    expect(shouldReplyAutonomously({ ...message, direction: "outbound" }, { assigneeId: null, serviceStatus: "new" })).toBe(false);
+  });
+
+  it("monta uma resposta identificada, limitada e sem ferramentas por padrão", () => {
+    const input = buildAutonomousLunaInput(message, "client-1", [
+      { direction: "inbound", type: "text", body: message.body, fileName: null, createdAt: message.createdAt },
+    ], true);
+    expect(input).toMatchObject({ clientId: "client-1", conversationId: "conversation-1", inputType: "text", fileKey: null,
+      metadata: { mode: "autonomous_reply", messageId: "message-auto-1", firstReply: true } });
+    expect(input.text).toContain("assistente virtual da Karrer");
+    expect(input.text).toContain("Não dê parecer jurídico");
+    expect(toolsForLunaRequest(input)).toHaveLength(0);
   });
 });

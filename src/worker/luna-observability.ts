@@ -5,7 +5,7 @@ export async function recordLunaRun(env: AppEnv, values: {
   id: string;
   requestId: string;
   input: ValidatedLunaRequest;
-  userId: string;
+  userId: string | null;
   status: "completed" | "failed" | "cached";
   model?: string | null;
   errorCode?: string | null;

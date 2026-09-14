@@ -35,3 +35,5 @@ Validações disponíveis: `npm run typecheck`, `npm test` e `npm run build`.
 A integração de backend com a agente Luna está documentada em [docs/LUNA_INTEGRATION.md](docs/LUNA_INTEGRATION.md). Ela exige `OPENAI_API_KEY` e `OPENAI_LUNA_AGENT_ID` como secrets do Worker.
 
 Durante um atendimento atribuído a uma pessoa, a Luna mantém fatos, pendências e resumo no D1 em segundo plano, sem responder ao cliente nem interferir no envio humano.
+
+O atendimento autônomo para conversas sem responsável existe com trava operacional e permanece desligado por padrão. Consulte a documentação antes de habilitar `LUNA_AUTONOMOUS_ENABLED`.

@@ -571,6 +571,9 @@ input:focus, select:focus, textarea:focus { border-color: #9b805e !important; bo
   .clients-page .form-actions { grid-template-columns: 1fr; }
 }
 .composer-file-input { display: none; }
+.composer-message-field { display: grid; flex: 1; min-width: 0; gap: 3px; }
+.composer-message-field textarea { width: 100%; }
+.composer-message-field small { padding-left: 4px; color: #82796d; font-size: 9px; line-height: 1.2; }
 .composer > button:disabled { opacity: .45; cursor: not-allowed; }
 .composer .send-button.recording { background: #a33; animation: recording-pulse 1.2s ease-in-out infinite; }
 @keyframes recording-pulse { 50% { opacity: .65; } }
