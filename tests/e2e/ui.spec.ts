@@ -21,7 +21,7 @@ async function mockDashboard(
     id: "conversation-1", contactId: "contact-1", createdAt: now, name: "Maria Oliveira", phone: "5592999999999",
     bank: "Banco Exemplo", stage: "Documentação", classification: "hot", score: 86, lastMessage: "Enviei os documentos",
     lastMessageType: "text", lastMessageAt: now, unreadCount: 2, online: false, lastSeenAt: now, waitingSince: now, serviceStatus: "new", assigneeId: "admin-1", assigneeName: "Ana Karrer", avatarUrl: "/karrer-logo.png",
-    firstResponseMinutes: 5.1, firstResponderId: "admin-1", firstResponderName: "Ana Karrer",
+    firstResponseMinutes: 279, firstResponderId: "admin-1", firstResponderName: "Ana Karrer",
     lunaAutonomousEnabled: false,
   }];
   const contacts = [{
@@ -237,13 +237,13 @@ test("média da primeira resposta muda conforme o atendente", async ({ page }, t
   }]);
   await page.goto("/");
   await page.getByRole("button", { name: "Leads" }).click();
-  await expect(page.locator(".response-time strong")).toContainText("10 min");
+  await expect(page.locator(".response-time strong")).toContainText("2h 27min");
   const team = page.getByRole("region", { name: "Tempo médio por atendente" });
   await expect(team.locator(".attendant-response-person")).toHaveCount(3);
   await expect(team.getByText("Ana Karrer")).toBeVisible();
   await expect(team.getByText("João Lima")).toBeVisible();
   await expect(team.getByText("Lia Costa")).toBeVisible();
-  await expect(team.locator(".attendant-response-person").filter({ hasText: "Ana Karrer" })).toContainText("5,1 min");
+  await expect(team.locator(".attendant-response-person").filter({ hasText: "Ana Karrer" })).toContainText("4h 39min");
   await expect(team.locator(".attendant-response-person").filter({ hasText: "João Lima" })).toContainText("14,9 min");
   await expect(team.locator(".attendant-response-person").filter({ hasText: "Lia Costa" })).toContainText("Nenhuma resposta no período");
   await expect(team.locator(".attendant-response-person").filter({ hasText: "Ana Karrer" })).toContainText("Online");
@@ -255,7 +255,7 @@ test("média da primeira resposta muda conforme o atendente", async ({ page }, t
   await expectNoHorizontalOverflow(page);
   if (process.env.CAPTURE_UI) await page.screenshot({ path: `tmp/${testInfo.project.name}-lead-presence.png`, fullPage: true });
   await page.getByRole("combobox", { name: "Atendente responsável" }).selectOption("admin-1");
-  await expect(page.locator(".response-time strong")).toContainText("5,1 min");
+  await expect(page.locator(".response-time strong")).toContainText("4h 39min");
   await page.getByRole("combobox", { name: "Atendente responsável" }).selectOption("user-2");
   await expect(page.locator(".response-time strong")).toContainText("14,9 min");
   await page.getByRole("combobox", { name: "Atendente responsável" }).selectOption("unassigned");

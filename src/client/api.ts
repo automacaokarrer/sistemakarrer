@@ -42,3 +42,11 @@ export function formatTime(value: string | null): string {
   }
   return date.toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit" });
 }
+
+export function formatResponseDuration(minutes: number | null): string {
+  if (minutes === null || !Number.isFinite(minutes) || minutes < 0) return "—";
+  if (minutes < 0.1) return "< 0,1 min";
+  if (minutes < 60) return `${new Intl.NumberFormat("pt-BR", { maximumFractionDigits: 1 }).format(minutes)} min`;
+  const totalMinutes = Math.round(minutes);
+  return `${Math.floor(totalMinutes / 60)}h ${totalMinutes % 60}min`;
+}
