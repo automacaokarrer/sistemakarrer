@@ -58,6 +58,9 @@ async function mockDashboard(
       { id: "user-2", name: "João Lima", avatarUrl: null, online: false, activeCount: 1, waitingCount: 0 },
       { id: "user-3", name: "Lia Costa", avatarUrl: null, online: false, activeCount: 0, waitingCount: 0 },
     ] };
+    else if (path === "/api/link-preview") body = {
+      url: requestUrl.searchParams.get("url"), title: "Documento compartilhado", description: "Confira o documento enviado pelo cliente.", siteName: "Adobe Acrobat",
+    };
     else if (path === "/api/settings/users") body = { users };
     else if (/\/api\/conversations\/[^/]+\/read$/.test(path) && route.request().method() === "POST") {
       const conversationId = path.split("/").at(-2)!;
@@ -395,6 +398,22 @@ test("histórico carrega 40 mensagens e busca as anteriores ao rolar", async ({ 
   await page.locator(".messages").evaluate((element) => { element.scrollTop = 0; element.dispatchEvent(new Event("scroll")); });
   await expect.poll(() => olderRequested).toBe(true);
   await expect(page.getByText("Mensagem mais antiga carregada")).toBeAttached();
+});
+
+test("links recebidos ficam clicáveis e mostram prévia", async ({ page }) => {
+  const adobeUrl = "https://acrobat.adobe.com/id/urn:aaid:test";
+  await mockDashboard(page, () => [], () => ({
+    messages: [{ id: "link-1", conversationId: "conversation-1", direction: "inbound", type: "text", body: `Confira o documento: ${adobeUrl}.`, fileName: null, mediaKey: null, duration: null, status: "received", createdAt: now }],
+    hasMore: false,
+    nextCursor: null,
+  }));
+  await page.goto("/");
+  await page.getByRole("button", { name: /Maria Oliveira/ }).click();
+  const messageLink = page.getByRole("link", { name: adobeUrl });
+  await expect(messageLink).toHaveAttribute("href", adobeUrl);
+  await expect(messageLink).toHaveAttribute("target", "_blank");
+  await expect(page.getByRole("link", { name: "Abrir prévia: Documento compartilhado" })).toContainText("Adobe Acrobat");
+  await expect(page.getByText("Confira o documento enviado pelo cliente.")).toBeVisible();
 });
 
 test("ícone de imagem envia arquivo pelo compositor", async ({ page }) => {

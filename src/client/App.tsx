@@ -33,6 +33,7 @@ import { api, formatResponseDuration, formatTime, initials } from "./api";
 import type { AuthStatus, Classification, Contact, Conversation, LeadAttendant, LeadTag, LeadTagHistory, ManagedUser, Message, Permissions, ServiceStatus, User } from "./types";
 
 type View = "chat" | "leads" | "clients" | "lead" | "settings";
+type LinkPreviewData = { url: string; title: string; description: string | null; siteName: string };
 type ConversationFilter = "all" | "mine" | "unassigned" | "unread" | "hot";
 type ConversationSort = "recent" | "waiting";
 
@@ -41,6 +42,9 @@ const serviceStatusLabel: Record<ServiceStatus, string> = { new: "Nova", in_prog
 const resetToken = new URLSearchParams(location.search).get("reset");
 const activationEmail = new URLSearchParams(location.search).get("activate");
 const activationRequiresPassword = new URLSearchParams(location.search).get("invite") === "1";
+const urlPattern = /https?:\/\/[^\s<>]+/gi;
+const trailingUrlPunctuation = /[),.!?;:]+$/;
+const linkPreviewCache = new Map<string, Promise<LinkPreviewData | null>>();
 
 function formatBrazilianPhone(value: string): string {
   const digits = value.replace(/\D/g, "");
@@ -792,11 +796,59 @@ function MessageBubble({ message, onImageOpen }: { message: Message; onImageOpen
         {message.type === "image" && (mediaUrl && imageDownloadUrl ? <button type="button" className="message-image-link" aria-label="Abrir imagem em tamanho completo" title="Abrir imagem" onClick={() => onImageOpen({ url: mediaUrl, alt: imageAlt, downloadUrl: imageDownloadUrl })}><img className="message-image" src={mediaUrl} alt={imageAlt} /></button> : <div className="media-placeholder"><Image /></div>)}
         {message.type === "audio" && (mediaUrl ? <audio className="message-audio" controls preload="metadata" src={mediaUrl} /> : <div className="audio-player"><Mic size={18} /><span /><small>{message.duration ? `${message.duration}s` : "Áudio"}</small></div>)}
         {message.type === "document" && <a className="document-message" href={mediaUrl ?? undefined} target="_blank" rel="noreferrer"><FileText /><span><strong>{message.fileName ?? message.body ?? "Documento"}</strong><small>Abrir documento</small></span></a>}
-        {message.body && message.type === "text" && <p>{message.body}</p>}
+        {message.body && message.type === "text" && <MessageText body={message.body} />}
         <footer>{formatTime(message.createdAt)} {message.direction === "outbound" && <span className={`message-status ${message.status}`}>· {message.status === "read" ? "Lido" : message.status === "delivered" ? "Entregue" : message.status === "failed" ? "Não enviado" : message.status === "sending" ? "Enviando" : "Enviado"} <CheckCheck size={12} /></span>}</footer>
       </div>
     </div>
   );
+}
+
+function splitMessageUrls(body: string): Array<{ text: string; url?: string }> {
+  const parts: Array<{ text: string; url?: string }> = [];
+  let cursor = 0;
+  for (const match of body.matchAll(urlPattern)) {
+    const index = match.index ?? 0;
+    if (index > cursor) parts.push({ text: body.slice(cursor, index) });
+    const matched = match[0];
+    const suffix = matched.match(trailingUrlPunctuation)?.[0] ?? "";
+    const url = suffix ? matched.slice(0, -suffix.length) : matched;
+    parts.push({ text: url, url });
+    if (suffix) parts.push({ text: suffix });
+    cursor = index + matched.length;
+  }
+  if (cursor < body.length) parts.push({ text: body.slice(cursor) });
+  return parts;
+}
+
+function MessageText({ body }: { body: string }) {
+  const parts = splitMessageUrls(body);
+  const firstUrl = parts.find((part) => part.url)?.url ?? null;
+  return <div className="message-text">
+    <p>{parts.map((part, index) => part.url
+      ? <a key={`${part.url}-${index}`} href={part.url} target="_blank" rel="noopener noreferrer">{part.text}</a>
+      : <span key={index}>{part.text}</span>)}</p>
+    {firstUrl && <LinkPreview url={firstUrl} />}
+  </div>;
+}
+
+function LinkPreview({ url }: { url: string }) {
+  const [preview, setPreview] = useState<LinkPreviewData | null>(null);
+  useEffect(() => {
+    let active = true;
+    let request = linkPreviewCache.get(url);
+    if (!request) {
+      request = api<LinkPreviewData>(`/api/link-preview?url=${encodeURIComponent(url)}`).catch(() => null);
+      linkPreviewCache.set(url, request);
+    }
+    void request.then((data) => { if (active) setPreview(data); });
+    return () => { active = false; };
+  }, [url]);
+  if (!preview) return null;
+  return <a className="link-preview" href={preview.url} target="_blank" rel="noopener noreferrer" aria-label={`Abrir prévia: ${preview.title}`}>
+    <small>{preview.siteName}</small>
+    <strong>{preview.title}</strong>
+    {preview.description && <span>{preview.description}</span>}
+  </a>;
 }
 
 function LeadsPage({ currentUserId, conversations, onOpen, onRefresh }: { currentUserId: string; conversations: Conversation[]; onOpen: (id: string) => void; onRefresh: () => Promise<void> }) {

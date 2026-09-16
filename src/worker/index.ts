@@ -27,6 +27,7 @@ import { uploadContactDocuments } from "./drive";
 import { INBOX_ROOM } from "./realtime";
 import { handleLunaRequest } from "./luna";
 import { listConversationTags, updateConversationTag } from "./tags";
+import { getLinkPreview } from "./link-preview";
 
 function withCookie(payload: unknown, cookie: string, status = 200): Response {
   return json(payload, { status, headers: { "Set-Cookie": cookie } });
@@ -71,6 +72,10 @@ async function routeApi(request: Request, env: AppEnv, ctx: ExecutionContext): P
     return json({ ok: true });
   }
   if (method === "GET" && pathname === "/api/account/avatar") return getUserAvatar(env, user.id);
+  if (method === "GET" && pathname === "/api/link-preview") {
+    requireAnyPermission(user, ["chat", "leads"]);
+    return getLinkPreview(url);
+  }
   if (method === "POST" && pathname === "/api/settings/change-password") {
     await changePassword(request, env, user);
     return json({ ok: true });
