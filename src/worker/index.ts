@@ -28,6 +28,7 @@ import { INBOX_ROOM } from "./realtime";
 import { handleLunaRequest } from "./luna";
 import { listConversationTags, updateConversationTag } from "./tags";
 import { getLinkPreview } from "./link-preview";
+import { deleteMessage, editMessage } from "./message-actions";
 
 function withCookie(payload: unknown, cookie: string, status = 200): Response {
   return json(payload, { status, headers: { "Set-Cookie": cookie } });
@@ -148,6 +149,16 @@ async function routeApi(request: Request, env: AppEnv, ctx: ExecutionContext): P
   if (messages && method === "POST") {
     requirePermission(user, "chat");
     return sendMessage(request, env, user, messages[1], ctx);
+  }
+
+  const messageAction = routeMatch(pathname, /^\/api\/conversations\/([^/]+)\/messages\/([^/]+)$/);
+  if (messageAction && method === "PATCH") {
+    requirePermission(user, "chat");
+    return editMessage(request, env, user, messageAction[1], messageAction[2]);
+  }
+  if (messageAction && method === "DELETE") {
+    requirePermission(user, "chat");
+    return deleteMessage(env, user, messageAction[1], messageAction[2]);
   }
 
   const conversationMedia = routeMatch(pathname, /^\/api\/conversations\/([^/]+)\/media$/);

@@ -51,6 +51,7 @@ export interface ZApiPayload {
   instanceId?: string;
   messageId?: string;
   phone?: string;
+  chatLid?: string;
   fromMe?: boolean;
   isGroup?: boolean;
   isNewsletter?: boolean;

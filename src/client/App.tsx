@@ -17,6 +17,7 @@ import {
   Mic,
   Paperclip,
   Pause,
+  Pencil,
   Play,
   Plus,
   Search,
@@ -29,10 +30,12 @@ import {
   X,
 } from "lucide-react";
 import { ClipboardEvent, FocusEvent, FormEvent, useCallback, useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { api, formatResponseDuration, formatTime, initials } from "./api";
 import type { AuthStatus, Classification, Contact, Conversation, LeadAttendant, LeadTag, LeadTagHistory, ManagedUser, Message, Permissions, ServiceStatus, User } from "./types";
 
 type View = "chat" | "leads" | "clients" | "lead" | "settings";
+type PendingAttachment = { id: string; file: File; kind: "image" | "audio" | "document"; previewUrl: string | null; duration?: number };
 type LinkPreviewData = { url: string; title: string; description: string | null; siteName: string };
 type ConversationFilter = "all" | "mine" | "unassigned" | "unread" | "hot";
 type ConversationSort = "recent" | "waiting";
@@ -47,6 +50,7 @@ const trailingUrlPunctuation = /[),.!?;:]+$/;
 const linkPreviewCache = new Map<string, Promise<LinkPreviewData | null>>();
 
 function formatBrazilianPhone(value: string): string {
+  if (/@lid$/i.test(value.trim())) return "Identificador privado do WhatsApp";
   const digits = value.replace(/\D/g, "");
   const national = digits.startsWith("55") && (digits.length === 12 || digits.length === 13) ? digits.slice(2) : digits;
   if (national.length !== 10 && national.length !== 11) return value;
@@ -449,7 +453,7 @@ function ChatPage({ currentUser, conversations, selected, onSelect, onOpenLead, 
           {filtered.length === 0 && <div className="conversation-empty"><span><MessageCircle size={19} /></span><strong>Nenhuma conversa</strong><p>{search || filter !== "all" ? "Tente alterar os filtros ou a busca." : "As novas conversas do WhatsApp aparecerão aqui."}</p></div>}
         </div>
       </div>
-      {selected ? <ConversationPanel conversation={selected} attendants={attendants} canAssign={currentUser.role === "admin"} assigning={assigning} updatingStatus={updatingStatus} updatingLuna={updatingLuna} actionError={actionError} onAssign={assign} onStatus={updateStatus} onToggleLuna={toggleLuna} onBack={() => onSelect(null)} onOpenLead={onOpenLead} onRefresh={onRefresh} /> : <div className="chat-welcome"><div className="welcome-mark"><MessageCircle size={28} /></div><span className="eyebrow">Central de atendimento</span><h2>Suas conversas em um só lugar</h2><p>Selecione um contato ao lado para visualizar o histórico e continuar o atendimento.</p><div className="welcome-features"><span><CheckCheck size={16} /> Histórico organizado</span><span><Users size={16} /> Leads integrados</span><span><ShieldCheck size={16} /> Dados protegidos</span></div><small><i /> Aguardando novas mensagens</small></div>}
+      {selected ? <ConversationPanel key={selected.id} conversation={selected} attendants={attendants} canAssign={currentUser.role === "admin"} assigning={assigning} updatingStatus={updatingStatus} updatingLuna={updatingLuna} actionError={actionError} onAssign={assign} onStatus={updateStatus} onToggleLuna={toggleLuna} onBack={() => onSelect(null)} onOpenLead={onOpenLead} onRefresh={onRefresh} /> : <div className="chat-welcome"><div className="welcome-mark"><MessageCircle size={28} /></div><span className="eyebrow">Central de atendimento</span><h2>Suas conversas em um só lugar</h2><p>Selecione um contato ao lado para visualizar o histórico e continuar o atendimento.</p><div className="welcome-features"><span><CheckCheck size={16} /> Histórico organizado</span><span><Users size={16} /> Leads integrados</span><span><ShieldCheck size={16} /> Dados protegidos</span></div><small><i /> Aguardando novas mensagens</small></div>}
     </section>
   );
 }
@@ -464,7 +468,7 @@ function ConversationPanel({ conversation, attendants, canAssign, assigning, upd
   const [sending, setSending] = useState(false);
   const [uploadingMedia, setUploadingMedia] = useState(false);
   const [recording, setRecording] = useState(false);
-  const [pendingAttachment, setPendingAttachment] = useState<{ file: File; kind: "image" | "audio" | "document"; previewUrl: string | null; duration?: number } | null>(null);
+  const [pendingAttachments, setPendingAttachments] = useState<PendingAttachment[]>([]);
   const [openImage, setOpenImage] = useState<{ url: string; alt: string; downloadUrl: string } | null>(null);
   const [sendError, setSendError] = useState("");
   const [tagData, setTagData] = useState<{ tags: LeadTag[]; history: LeadTagHistory[] }>({ tags: [], history: [] });
@@ -476,6 +480,7 @@ function ConversationPanel({ conversation, attendants, canAssign, assigning, upd
   const loadingOlderRef = useRef(false);
   const imageInputRef = useRef<HTMLInputElement>(null);
   const documentInputRef = useRef<HTMLInputElement>(null);
+  const pendingAttachmentsRef = useRef<PendingAttachment[]>([]);
   const recorderRef = useRef<MediaRecorder | null>(null);
   const recorderStreamRef = useRef<MediaStream | null>(null);
   const recordingStartedAtRef = useRef(0);
@@ -606,6 +611,9 @@ function ConversationPanel({ conversation, attendants, canAssign, assigning, upd
           if (data.type === "message.status" && data.messageId && data.status) {
             setMessages((current) => current.map((message) => message.id === data.messageId ? { ...message, status: data.status! } : message));
           }
+          if (data.type === "message.updated" && data.message?.conversationId === conversation.id) {
+            setMessages((current) => current.map((message) => message.id === data.message!.id ? data.message! : message));
+          }
           if (data.type === "conversation.tags") void loadTags().catch(() => undefined);
         } catch { /* mensagens de controle são ignoradas */ }
       };
@@ -663,45 +671,84 @@ function ConversationPanel({ conversation, attendants, canAssign, assigning, upd
     }
   }
 
-  async function sendAttachment(file: File, kind: "image" | "audio" | "document", duration?: number) {
-    if (uploadingMedia) return;
+  async function sendAttachments() {
+    if (uploadingMedia || !pendingAttachments.length) return;
     setUploadingMedia(true);
     setSendError("");
-    const form = new FormData();
-    form.set("file", file); form.set("kind", kind);
-    if (text.trim() && kind !== "audio") form.set("caption", text.trim());
-    if (duration) form.set("duration", String(duration));
+    const attachments = [...pendingAttachments];
+    const caption = text.trim();
+    let captionSent = false;
+    let sent = 0;
     try {
-      const result = await api<{ message: Message }>(`/api/conversations/${conversation.id}/media`, { method: "POST", body: form });
-      setMessages((current) => current.some((item) => item.id === result.message.id) ? current : [...current, result.message]);
-      if (kind !== "audio") setText("");
-      setPendingAttachment(null);
+      for (const attachment of attachments) {
+        const form = new FormData();
+        form.set("file", attachment.file);
+        form.set("kind", attachment.kind);
+        if (caption && !captionSent && attachment.kind !== "audio") form.set("caption", caption);
+        if (attachment.duration) form.set("duration", String(attachment.duration));
+        const result = await api<{ message: Message }>(`/api/conversations/${conversation.id}/media`, { method: "POST", body: form });
+        setMessages((current) => current.some((item) => item.id === result.message.id) ? current : [...current, result.message]);
+        if (caption && !captionSent && attachment.kind !== "audio") captionSent = true;
+        sent += 1;
+        if (attachment.previewUrl) URL.revokeObjectURL(attachment.previewUrl);
+        setPendingAttachments((current) => current.filter((item) => item.id !== attachment.id));
+      }
+      if (captionSent) setText("");
       await onRefresh();
       requestAnimationFrame(() => endRef.current?.scrollIntoView({ behavior: "smooth" }));
     } catch (reason) {
-      setSendError(reason instanceof Error ? reason.message : "Não foi possível enviar o arquivo.");
+      const detail = reason instanceof Error ? reason.message : "Não foi possível enviar o arquivo.";
+      setSendError(sent ? `${sent} de ${attachments.length} arquivos enviados. ${detail}` : detail);
     } finally { setUploadingMedia(false); }
   }
 
-  function stageAttachment(file: File, kind: "image" | "audio" | "document", duration?: number) {
-    setPendingAttachment({ file, kind, duration, previewUrl: kind === "image" || kind === "audio" ? URL.createObjectURL(file) : null });
+  function stageAttachments(files: File[], kind: "image" | "audio" | "document", duration?: number) {
+    if (!files.length) return;
+    const remaining = Math.max(0, 10 - pendingAttachments.length);
+    const accepted = files.slice(0, remaining);
+    if (!accepted.length) {
+      setSendError("Envie no máximo 10 arquivos por vez.");
+      return;
+    }
+    const staged = accepted.map((file) => ({
+      id: crypto.randomUUID(), file, kind, duration,
+      previewUrl: kind === "image" || kind === "audio" ? URL.createObjectURL(file) : null,
+    }));
+    setPendingAttachments((current) => [...current, ...staged]);
+    setSendError(files.length > remaining ? "Os primeiros 10 arquivos foram adicionados. Envie-os antes de selecionar outros." : "");
+  }
+
+  function removePendingAttachment(id: string) {
+    setPendingAttachments((current) => {
+      const removed = current.find((item) => item.id === id);
+      if (removed?.previewUrl) URL.revokeObjectURL(removed.previewUrl);
+      return current.filter((item) => item.id !== id);
+    });
+  }
+
+  function clearPendingAttachments() {
+    setPendingAttachments((current) => {
+      current.forEach((item) => { if (item.previewUrl) URL.revokeObjectURL(item.previewUrl); });
+      return [];
+    });
     setSendError("");
   }
 
   function pasteImage(event: ClipboardEvent<HTMLTextAreaElement>) {
-    const item = Array.from(event.clipboardData.items).find((entry) => entry.kind === "file" && entry.type.startsWith("image/"));
-    if (!item) return;
+    const items = Array.from(event.clipboardData.items).filter((entry) => entry.kind === "file" && entry.type.startsWith("image/"));
+    if (!items.length) return;
     event.preventDefault();
-    const pasted = item.getAsFile();
-    if (!pasted) return;
     const extensions: Record<string, string> = { "image/jpeg": "jpg", "image/png": "png", "image/webp": "webp" };
-    const extension = extensions[pasted.type];
-    if (!extension) {
+    const pastedFiles = items.flatMap((item, index) => {
+      const pasted = item.getAsFile();
+      if (!pasted || !extensions[pasted.type]) return [];
+      return [new File([pasted], pasted.name || `print-${Date.now()}-${index + 1}.${extensions[pasted.type]}`, { type: pasted.type, lastModified: Date.now() })];
+    });
+    if (!pastedFiles.length) {
       setSendError("O print colado precisa estar em JPG, PNG ou WebP.");
       return;
     }
-    const file = new File([pasted], pasted.name || `print-${Date.now()}.${extension}`, { type: pasted.type, lastModified: Date.now() });
-    stageAttachment(file, "image");
+    stageAttachments(pastedFiles, "image");
   }
 
   async function toggleRecording() {
@@ -719,16 +766,23 @@ function ConversationPanel({ conversation, attendants, canAssign, assigning, upd
         recorderStreamRef.current?.getTracks().forEach((track) => track.stop());
         recorderStreamRef.current = null; recorderRef.current = null; setRecording(false);
         const blob = new Blob(chunks, { type: mime });
-        if (blob.size) stageAttachment(new File([blob], `audio-${Date.now()}.${mime.includes("mp4") ? "m4a" : "webm"}`, { type: mime }), "audio", duration);
+        if (blob.size) stageAttachments([new File([blob], `audio-${Date.now()}.${mime.includes("mp4") ? "m4a" : "webm"}`, { type: mime })], "audio", duration);
       };
       recorderRef.current = recorder; recorderStreamRef.current = stream; recordingStartedAtRef.current = Date.now();
       recorder.start(); setRecording(true);
     } catch { setSendError("Permita o acesso ao microfone para gravar o áudio."); }
   }
 
+  useEffect(() => { pendingAttachmentsRef.current = pendingAttachments; }, [pendingAttachments]);
   useEffect(() => () => {
-    if (pendingAttachment?.previewUrl) URL.revokeObjectURL(pendingAttachment.previewUrl);
-  }, [pendingAttachment]);
+    pendingAttachmentsRef.current.forEach((item) => { if (item.previewUrl) URL.revokeObjectURL(item.previewUrl); });
+  }, []);
+  useEffect(() => {
+    setPendingAttachments((current) => {
+      current.forEach((item) => { if (item.previewUrl) URL.revokeObjectURL(item.previewUrl); });
+      return [];
+    });
+  }, [conversation.id]);
 
   return (
     <div className={`conversation-panel ${tagModal ? "modal-open" : ""}`}>
@@ -748,26 +802,33 @@ function ConversationPanel({ conversation, attendants, canAssign, assigning, upd
         {loading && <div className="loading-messages"><LoaderCircle className="spin" size={15} /> Carregando mensagens...</div>}
         {loadingOlder && <div className="loading-messages"><LoaderCircle className="spin" size={15} /> Carregando mensagens anteriores...</div>}
         <div className="date-pill">Hoje</div>
-        {messages.map((message) => <MessageBubble key={message.id} message={message} onImageOpen={setOpenImage} />)}
+        {messages.map((message) => <MessageBubble key={message.id} message={message} onImageOpen={setOpenImage} onUpdated={(updated) => { setMessages((current) => current.map((item) => item.id === updated.id ? updated : item)); void onRefresh().catch(() => undefined); }} />)}
         {sendError && <div className="message-error" role="alert">{sendError}</div>}
         {!loading && messages.length === 0 && <Empty text="Ainda não há mensagens nesta conversa." dark />}
         <div ref={endRef} />
       </div>
-      {pendingAttachment && <div className={`attachment-preview ${pendingAttachment.kind}`} role="region" aria-label="Prévia do arquivo">
-        <div className="attachment-preview-content">
-          {pendingAttachment.kind === "image" && pendingAttachment.previewUrl && <img src={pendingAttachment.previewUrl} alt="Prévia da imagem" />}
-          {pendingAttachment.kind === "audio" && pendingAttachment.previewUrl && <AudioPreview src={pendingAttachment.previewUrl} recordedDuration={pendingAttachment.duration} />}
-          {pendingAttachment.kind === "document" && <><span className="attachment-file-icon"><FileText size={25} /></span><span className="attachment-copy"><strong>{pendingAttachment.file.name}</strong><small>Documento selecionado</small></span></>}
-          {pendingAttachment.kind === "image" && <span className="attachment-copy"><strong>{pendingAttachment.file.name}</strong><small>Confira a imagem antes de enviar</small></span>}
+      <div className="composer-recipient" aria-label="Destinatário do envio"><span>Enviar para</span><strong>{conversation.name}</strong><span>{formatBrazilianPhone(conversation.phone)}</span></div>
+      {pendingAttachments.length > 0 && <div className="attachment-preview" role="region" aria-label="Prévia dos arquivos">
+        <div className="attachment-preview-list">
+          {pendingAttachments.map((attachment) => <div className={`attachment-preview-item ${attachment.kind}`} key={attachment.id}>
+            <div className="attachment-preview-content">
+              {attachment.kind === "image" && attachment.previewUrl && <img src={attachment.previewUrl} alt={`Prévia de ${attachment.file.name}`} />}
+              {attachment.kind === "audio" && attachment.previewUrl && <AudioPreview src={attachment.previewUrl} recordedDuration={attachment.duration} />}
+              {attachment.kind === "document" && <><span className="attachment-file-icon"><FileText size={25} /></span><span className="attachment-copy"><strong>{attachment.file.name}</strong><small>Documento selecionado</small></span></>}
+              {attachment.kind === "image" && <span className="attachment-copy"><strong>{attachment.file.name}</strong><small>Imagem selecionada</small></span>}
+            </div>
+            <button type="button" className="attachment-remove" aria-label={`Remover ${attachment.file.name}`} disabled={uploadingMedia} onClick={() => removePendingAttachment(attachment.id)}><X size={15} /></button>
+          </div>)}
         </div>
         <div className="attachment-preview-actions">
-          <button type="button" className="outline" disabled={uploadingMedia} onClick={() => setPendingAttachment(null)}><X size={16} /> {pendingAttachment.kind === "audio" ? "Descartar" : "Cancelar"}</button>
-          <button type="button" className="primary" disabled={uploadingMedia} onClick={() => void sendAttachment(pendingAttachment.file, pendingAttachment.kind, pendingAttachment.duration)}>{uploadingMedia ? <LoaderCircle className="spin" size={16} /> : <Send size={16} />} {uploadingMedia ? "Enviando..." : pendingAttachment.kind === "audio" ? "Enviar áudio" : "Enviar arquivo"}</button>
+          <span>{pendingAttachments.length} {pendingAttachments.length === 1 ? "arquivo selecionado" : "arquivos selecionados"}</span>
+          <button type="button" className="outline" disabled={uploadingMedia} onClick={clearPendingAttachments}><X size={16} /> Cancelar</button>
+          <button type="button" className="primary" disabled={uploadingMedia} onClick={() => void sendAttachments()}>{uploadingMedia ? <LoaderCircle className="spin" size={16} /> : <Send size={16} />} {uploadingMedia ? "Enviando..." : pendingAttachments.length === 1 && pendingAttachments[0].kind === "audio" ? "Enviar áudio" : `Enviar ${pendingAttachments.length} ${pendingAttachments.length === 1 ? "arquivo" : "arquivos"}`}</button>
         </div>
       </div>}
       <form className="composer" onSubmit={sendMessage}>
-        <input ref={documentInputRef} className="composer-file-input" type="file" accept=".pdf,.doc,.docx,.xls,.xlsx,.csv,.txt" onChange={(event) => { const file = event.target.files?.[0]; if (file) stageAttachment(file, "document"); event.currentTarget.value = ""; }} />
-        <input ref={imageInputRef} className="composer-file-input" type="file" accept="image/jpeg,image/png,image/webp" onChange={(event) => { const file = event.target.files?.[0]; if (file) stageAttachment(file, "image"); event.currentTarget.value = ""; }} />
+        <input ref={documentInputRef} className="composer-file-input" type="file" multiple accept=".pdf,.doc,.docx,.xls,.xlsx,.csv,.txt" onChange={(event) => { stageAttachments(Array.from(event.target.files ?? []), "document"); event.currentTarget.value = ""; }} />
+        <input ref={imageInputRef} className="composer-file-input" type="file" multiple accept="image/jpeg,image/png,image/webp" onChange={(event) => { stageAttachments(Array.from(event.target.files ?? []), "image"); event.currentTarget.value = ""; }} />
         <button type="button" title="Anexar documento" aria-label="Anexar documento" disabled={uploadingMedia} onClick={() => documentInputRef.current?.click()}><Paperclip size={20} /></button><button type="button" title="Enviar imagem" aria-label="Enviar imagem" disabled={uploadingMedia} onClick={() => imageInputRef.current?.click()}><Image size={19} /></button>
         <div className="composer-message-field">
           <textarea aria-label="Mensagem" aria-describedby="composer-shortcut" value={text} onChange={(event) => setText(event.target.value)} onPaste={pasteImage} onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); event.currentTarget.form?.requestSubmit(); } }} placeholder="Escreva uma mensagem" rows={1} />
@@ -785,20 +846,74 @@ function ConversationPanel({ conversation, attendants, canAssign, assigning, upd
   );
 }
 
-function MessageBubble({ message, onImageOpen }: { message: Message; onImageOpen: (image: { url: string; alt: string; downloadUrl: string }) => void }) {
+function MessageBubble({ message, onImageOpen, onUpdated }: { message: Message; onImageOpen: (image: { url: string; alt: string; downloadUrl: string }) => void; onUpdated: (message: Message) => void }) {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(message.body ?? "");
+  const [confirmDelete, setConfirmDelete] = useState(false);
+  const [busy, setBusy] = useState<"edit" | "delete" | null>(null);
+  const [actionError, setActionError] = useState("");
   const mediaUrl = message.mediaKey ? `/api/media/${encodeURIComponent(message.mediaKey)}` : null;
   const imageAlt = message.body ?? "Imagem enviada";
   const imageFileName = message.fileName?.trim() || `imagem-${message.id}`;
   const imageDownloadUrl = mediaUrl ? `${mediaUrl}?download=1&filename=${encodeURIComponent(imageFileName)}` : null;
+
+  useEffect(() => {
+    if (message.deletedAt) { setEditing(false); setConfirmDelete(false); }
+  }, [message.deletedAt]);
+
+  async function saveEdit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const body = draft.trim();
+    if (!message.canEdit || message.recipientMismatch || !body || busy) return;
+    if (body === message.body) { setEditing(false); return; }
+    setBusy("edit");
+    setActionError("");
+    try {
+      const result = await api<{ message: Message }>(`/api/conversations/${message.conversationId}/messages/${message.id}`, { method: "PATCH", body: JSON.stringify({ body, expectedEditedAt: message.editedAt ?? null }) });
+      onUpdated(result.message);
+      setEditing(false);
+    } catch (reason) {
+      setActionError(reason instanceof Error ? reason.message : "Não foi possível editar a mensagem.");
+    } finally { setBusy(null); }
+  }
+
+  async function deleteMessage() {
+    if (!message.canDelete || message.recipientMismatch || busy) return;
+    setBusy("delete");
+    setActionError("");
+    try {
+      const result = await api<{ message: Message }>(`/api/conversations/${message.conversationId}/messages/${message.id}`, { method: "DELETE" });
+      onUpdated(result.message);
+      setConfirmDelete(false);
+    } catch (reason) {
+      setActionError(reason instanceof Error ? reason.message : "Não foi possível apagar a mensagem.");
+    } finally { setBusy(null); }
+  }
+
   return (
     <div className={`message-row ${message.direction}`}>
       <div className={`bubble ${message.type}`}>
-        {message.type === "image" && (mediaUrl && imageDownloadUrl ? <button type="button" className="message-image-link" aria-label="Abrir imagem em tamanho completo" title="Abrir imagem" onClick={() => onImageOpen({ url: mediaUrl, alt: imageAlt, downloadUrl: imageDownloadUrl })}><img className="message-image" src={mediaUrl} alt={imageAlt} /></button> : <div className="media-placeholder"><Image /></div>)}
-        {message.type === "audio" && (mediaUrl ? <audio className="message-audio" controls preload="metadata" src={mediaUrl} /> : <div className="audio-player"><Mic size={18} /><span /><small>{message.duration ? `${message.duration}s` : "Áudio"}</small></div>)}
-        {message.type === "document" && <a className="document-message" href={mediaUrl ?? undefined} target="_blank" rel="noreferrer"><FileText /><span><strong>{message.fileName ?? message.body ?? "Documento"}</strong><small>Abrir documento</small></span></a>}
-        {message.body && message.type === "text" && <MessageText body={message.body} />}
-        <footer>{formatTime(message.createdAt)} {message.direction === "outbound" && <span className={`message-status ${message.status}`}>· {message.status === "read" ? "Lido" : message.status === "delivered" ? "Entregue" : message.status === "failed" ? "Não enviado" : message.status === "sending" ? "Enviando" : "Enviado"} <CheckCheck size={12} /></span>}</footer>
+        {message.deletedAt ? <p className="message-deleted">Mensagem apagada</p> : <>
+          {message.type === "image" && (mediaUrl && imageDownloadUrl ? <button type="button" className="message-image-link" aria-label="Abrir imagem em tamanho completo" title="Abrir imagem" onClick={() => onImageOpen({ url: mediaUrl, alt: imageAlt, downloadUrl: imageDownloadUrl })}><img className="message-image" src={mediaUrl} alt={imageAlt} /></button> : <div className="media-placeholder"><Image /></div>)}
+          {message.type === "audio" && (mediaUrl ? <audio className="message-audio" controls preload="metadata" src={mediaUrl} /> : <div className="audio-player"><Mic size={18} /><span /><small>{message.duration ? `${message.duration}s` : "Áudio"}</small></div>)}
+          {message.type === "document" && <a className="document-message" href={mediaUrl ?? undefined} target="_blank" rel="noreferrer"><FileText /><span><strong>{message.fileName ?? message.body ?? "Documento"}</strong><small>Abrir documento</small></span></a>}
+          {editing ? <form className="message-edit-form" onSubmit={(event) => void saveEdit(event)}>
+            <textarea aria-label="Editar mensagem" value={draft} onChange={(event) => setDraft(event.target.value)} maxLength={10_000} rows={3} disabled={Boolean(busy)} autoFocus />
+            <div><button type="button" onClick={() => { setEditing(false); setActionError(""); }} disabled={Boolean(busy)}>Cancelar</button><button type="submit" disabled={Boolean(busy) || !draft.trim()}>{busy === "edit" ? "Salvando..." : "Salvar edição"}</button></div>
+          </form> : message.body && message.type === "text" && <MessageText body={message.body} />}
+        </>}
+        {message.recipientMismatch && <p className="message-recipient-warning" role="alert">Destinatário informado pela Z-API diverge desta conversa. Verifique no WhatsApp.</p>}
+        <footer>{message.editedAt && !message.deletedAt && <span className="message-edited">Editada · </span>}{formatTime(message.createdAt)} {message.direction === "outbound" && !message.deletedAt && <span className={`message-status ${message.status}`}>· {message.status === "read" ? "Lido" : message.status === "delivered" ? "Entregue" : message.status === "failed" ? "Não enviado" : message.status === "sending" ? "Enviando" : "Enviado"} <CheckCheck size={12} /></span>}</footer>
+        {!message.deletedAt && !message.recipientMismatch && !editing && (message.canEdit || message.canDelete) && <div className="message-action-bar">
+          {message.canEdit && <button type="button" onClick={() => { setDraft(message.body ?? ""); setActionError(""); setEditing(true); }}><Pencil size={12} /> Editar</button>}
+          {message.canDelete && <button type="button" onClick={() => { setActionError(""); setConfirmDelete(true); }}><Trash2 size={12} /> Apagar</button>}
+        </div>}
+        {actionError && !confirmDelete && <p className="message-action-error" role="alert">{actionError}</p>}
       </div>
+      {confirmDelete && <Modal title="Apagar mensagem" subtitle="Solicitar exclusão para todos no WhatsApp? A remoção no aparelho do destinatário pode não ser concluída." tone="danger" onClose={() => { if (!busy) { setConfirmDelete(false); setActionError(""); } }}>
+        {actionError && <p className="message-action-error" role="alert">{actionError}</p>}
+        <div className="modal-actions"><button type="button" className="outline" disabled={Boolean(busy)} onClick={() => { setConfirmDelete(false); setActionError(""); }}>Cancelar</button><button type="button" className="primary" disabled={Boolean(busy)} onClick={() => void deleteMessage()}>{busy === "delete" ? "Apagando..." : "Apagar para todos"}</button></div>
+      </Modal>}
     </div>
   );
 }
@@ -1013,7 +1128,7 @@ function LeadDetail({ conversation, onBack, onChat, onRefresh }: { conversation:
   return (
     <section className="page detail-page">
       <header className="lead-hero"><button onClick={onBack}><ArrowLeft size={17} /> Leads</button><Avatar name={conversation.name} /><div><h1>{conversation.name}</h1><p>{formatBrazilianPhone(conversation.phone)} · <em>{conversation.online ? "Online" : "Offline"}</em> · Origem: WhatsApp</p></div><button className="primary" onClick={onChat}>Abrir chat</button><button className="outline">Editar cadastro</button></header>
-      <div className="detail-grid"><div className="card history-card"><div className="tabs"><button className="active">Histórico da conversa</button><button>Mídias e documentos</button><button>Anotações</button><button>Linha do tempo</button></div><div className="history-list">{messages.map((message) => <div key={message.id}><time>{new Date(message.createdAt).toLocaleString("pt-BR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" })}</time><p><strong>{message.direction === "inbound" ? conversation.name.split(" ")[0] : "Karrer"}</strong> — {message.type === "text" ? message.body : `${message.type === "audio" ? "Áudio" : message.type === "image" ? "Imagem" : "Documento"}${message.body ? ` · ${message.body}` : ""}`}</p></div>)}</div><footer>Histórico somente leitura · para responder, abra o chat.</footer></div>
+      <div className="detail-grid"><div className="card history-card"><div className="tabs"><button className="active">Histórico da conversa</button><button>Mídias e documentos</button><button>Anotações</button><button>Linha do tempo</button></div><div className="history-list">{messages.map((message) => <div key={message.id}><time>{new Date(message.createdAt).toLocaleString("pt-BR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" })}</time><p><strong>{message.direction === "inbound" ? conversation.name.split(" ")[0] : "Karrer"}</strong> — {message.deletedAt ? "Mensagem apagada" : message.type === "text" ? message.body : `${message.type === "audio" ? "Áudio" : message.type === "image" ? "Imagem" : "Documento"}${message.body ? ` · ${message.body}` : ""}`}{message.editedAt && !message.deletedAt ? " (editada)" : ""}</p></div>)}</div><footer>Histórico somente leitura · para responder, abra o chat.</footer></div>
         <aside className="detail-aside"><div className="classification-card"><span className="eyebrow">Classificação</span><div className="segmented">{(["hot", "warm", "cold"] as Classification[]).map((value) => <button key={value} className={conversation.classification === value ? value : ""} onClick={() => void classify(value)}>{classificationLabel[value]}</button>)}</div><p><span>Pontuação</span><strong>{conversation.score} / 100</strong></p><progress max="100" value={conversation.score} /><ul><li>Respondeu em menos de 5 min</li><li>Enviou documentação</li><li>Interações recentes</li><li className="pending">Contrato de honorários pendente</li></ul></div><div className="card data-card"><span className="eyebrow">Dados do cliente</span><dl><dt>Telefone</dt><dd>{formatBrazilianPhone(conversation.phone)}</dd><dt>Banco</dt><dd>{conversation.bank ?? "Não informado"}</dd><dt>Etapa</dt><dd><strong>{conversation.stage}</strong></dd><dt>Responsável</dt><dd>{conversation.assigneeName ?? "Não atribuído"}</dd></dl></div><div className="card notes-card"><span className="eyebrow">Anotações internas</span><textarea value={note} onChange={(event) => setNote(event.target.value)} placeholder="Adicionar nota..." /><button className="primary" onClick={() => void saveNote()}>Salvar nota</button></div></aside></div>
     </section>
   );
@@ -1208,7 +1323,7 @@ function AudioPreview({ src, recordedDuration }: { src: string; recordedDuration
 
 function Modal({ title, subtitle, tone, onClose, children }: { title: string; subtitle: string; tone?: "danger"; onClose: () => void; children: React.ReactNode }) {
   useEffect(() => { const close = (event: KeyboardEvent) => event.key === "Escape" && onClose(); addEventListener("keydown", close); return () => removeEventListener("keydown", close); }, [onClose]);
-  return <div className="modal-backdrop" role="presentation" onMouseDown={(event) => event.target === event.currentTarget && onClose()}><section className={`modal-card ${tone ?? ""}`} role="dialog" aria-modal="true" aria-label={title}><button className="modal-close" onClick={onClose} aria-label="Fechar"><X size={18} /></button><div className="modal-mark">{tone === "danger" ? <Trash2 /> : <ShieldCheck />}</div><h2>{title}</h2><p>{subtitle}</p>{children}</section></div>;
+  return createPortal(<div className="modal-backdrop" role="presentation" onMouseDown={(event) => event.target === event.currentTarget && onClose()}><section className={`modal-card ${tone ?? ""}`} role="dialog" aria-modal="true" aria-label={title}><button className="modal-close" onClick={onClose} aria-label="Fechar"><X size={18} /></button><div className="modal-mark">{tone === "danger" ? <Trash2 /> : <ShieldCheck />}</div><h2>{title}</h2><p>{subtitle}</p>{children}</section></div>, document.body);
 }
 
 function formatWaitingTime(waitingSince: string, now: number): string {

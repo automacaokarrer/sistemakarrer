@@ -29,6 +29,12 @@ describe("edição de cliente", () => {
     expect(() => contactInput({ ...pending, cpf: "123" }, true)).toThrow(HttpError);
     expect(() => contactInput(pending)).toThrow(HttpError);
   });
+
+  it("preserva o identificador privado ao editar outros dados, sem convertê-lo em telefone", () => {
+    const lid = "65998849469@lid";
+    expect(contactInput({ ...pending, phone: lid, name: "Contato" }, true, lid).phone).toBe(lid);
+    expect(() => contactInput({ ...pending, phone: lid, name: "Contato" }, true)).toThrow(HttpError);
+  });
 });
 
 describe("download de mídia privada", () => {

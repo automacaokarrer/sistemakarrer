@@ -7,7 +7,7 @@ import type { ValidatedLunaRequest } from "./luna-types";
 import type { MessageRow } from "./repository";
 import { INBOX_ROOM } from "./realtime";
 import type { AppEnv } from "./types";
-import { sendText } from "./zapi";
+import { sendTextDetailed } from "./zapi";
 
 interface AutonomousConversationRow {
   contactId: string;
@@ -120,21 +120,22 @@ export async function processAutonomousReply(env: AppEnv, message: PassiveMessag
     }
 
     const body = cleanText(result.analysis.replyToClient, 2_000, true)!;
-    const providerId = await sendText(env, conversation.phone, body);
+    const sent = await sendTextDetailed(env, conversation.phone, body);
     const outboundId = crypto.randomUUID();
     const createdAt = new Date().toISOString();
     await env.DB.batch([
       env.DB.prepare(`INSERT INTO messages
-        (id, conversation_id, sender_user_id, direction, type, body, status, zapi_message_id, created_at)
-        VALUES (?1, ?2, NULL, 'outbound', 'text', ?3, 'sent', ?4, ?5)`)
-        .bind(outboundId, message.conversationId, body, providerId, createdAt),
+        (id, conversation_id, sender_user_id, direction, type, body, status, zapi_message_id, recipient_phone, created_at)
+        VALUES (?1, ?2, NULL, 'outbound', 'text', ?3, 'sent', ?4, ?5, ?6)`)
+        .bind(outboundId, message.conversationId, body, sent.messageId, sent.recipientPhone, createdAt),
       env.DB.prepare("UPDATE conversations SET last_message_at = ?1, updated_at = ?1 WHERE id = ?2")
         .bind(createdAt, message.conversationId),
       env.DB.prepare(`UPDATE luna_autonomous_replies SET outbound_message_id = ?1, status = 'sent', error_code = NULL,
         updated_at = ?2 WHERE inbound_message_id = ?3`).bind(outboundId, createdAt, message.id),
     ]);
     const outbound: MessageRow = { id: outboundId, conversationId: message.conversationId, direction: "outbound", type: "text",
-      body, mediaKey: null, fileName: null, duration: null, status: "sent", createdAt };
+      body, mediaKey: null, fileName: null, duration: null, status: "sent", createdAt,
+      editedAt: null, deletedAt: null, recipientMismatch: false, canEdit: false, canDelete: false };
     await env.CHAT_ROOMS.getByName(message.conversationId).broadcast({ type: "message.new", message: outbound });
     await env.CHAT_ROOMS.getByName(INBOX_ROOM).broadcast({ type: "conversation.updated", conversationId: message.conversationId });
     console.log(JSON.stringify({ event: "luna.autonomous.sent", requestId, clientId: conversation.contactId,

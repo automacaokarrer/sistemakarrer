@@ -13,7 +13,7 @@ describe("tempo da primeira resposta", () => {
           last_message_at TEXT, unread_count INTEGER, online INTEGER, last_seen_at TEXT, waiting_since TEXT,
           service_status TEXT, stage TEXT, classification TEXT, score INTEGER, luna_autonomous_enabled INTEGER NOT NULL DEFAULT 0);
         CREATE TABLE messages (id TEXT PRIMARY KEY, conversation_id TEXT, sender_user_id TEXT, direction TEXT,
-          type TEXT, body TEXT, status TEXT, created_at TEXT);
+          type TEXT, body TEXT, status TEXT, created_at TEXT, deleted_at TEXT);
       `);
       const at = (minutesAgo: number) => new Date(Date.now() - minutesAgo * 60_000).toISOString();
       const insertConversation = db.prepare(`INSERT INTO conversations

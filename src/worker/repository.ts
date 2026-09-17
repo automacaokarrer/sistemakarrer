@@ -1,6 +1,7 @@
 import { HttpError, cleanText, json, normalizePhone, readJson } from "./http";
 import type { AppEnv, SessionUser } from "./types";
-import { fetchContactProfilePicture, sendMedia, sendText } from "./zapi";
+import { fetchContactProfilePicture, sendMedia, sendTextDetailed } from "./zapi";
+import { isZApiLid } from "./recipient-safety";
 import { INBOX_ROOM } from "./realtime";
 import { scheduleHumanConversationMemory, scheduleHumanConversationMemoryFlush } from "./luna-passive";
 
@@ -45,6 +46,17 @@ export interface MessageRow {
   duration: number | null;
   status: "sending" | "sent" | "delivered" | "read" | "received" | "failed";
   createdAt: string;
+  editedAt: string | null;
+  deletedAt: string | null;
+  recipientMismatch: boolean;
+  canEdit: boolean;
+  canDelete: boolean;
+}
+
+export type StoredMessageRow = Omit<MessageRow, "recipientMismatch" | "canEdit" | "canDelete"> & { recipientMismatch: number; canEdit: number; canDelete: number };
+
+export function presentMessage(row: StoredMessageRow): MessageRow {
+  return { ...row, recipientMismatch: Boolean(row.recipientMismatch), canEdit: Boolean(row.canEdit), canDelete: Boolean(row.canDelete) };
 }
 
 const firstResponseJoins = `LEFT JOIN messages firstInbound ON firstInbound.id = (
@@ -60,13 +72,25 @@ const conversationSelect = `SELECT c.id, c.contact_id AS contactId, c.created_at
   c.luna_autonomous_enabled AS lunaAutonomousEnabled,
   ROUND((julianday(firstReply.created_at) - julianday(firstInbound.created_at)) * 1440, 2) AS firstResponseMinutes,
   firstReply.sender_user_id AS firstResponderId, responder.name AS firstResponderName,
-  (SELECT m.body FROM messages m WHERE m.conversation_id = c.id ORDER BY m.created_at DESC, m.id DESC LIMIT 1) AS lastMessage,
+  (SELECT CASE WHEN m.deleted_at IS NOT NULL THEN 'Mensagem apagada' ELSE m.body END FROM messages m WHERE m.conversation_id = c.id ORDER BY m.created_at DESC, m.id DESC LIMIT 1) AS lastMessage,
   (SELECT m.type FROM messages m WHERE m.conversation_id = c.id ORDER BY m.created_at DESC, m.id DESC LIMIT 1) AS lastMessageType
   FROM conversations c JOIN contacts ct ON ct.id = c.contact_id LEFT JOIN users u ON u.id = c.assignee_id
   ${firstResponseJoins} LEFT JOIN users responder ON responder.id = firstReply.sender_user_id`;
 
 export const messageSelect = `SELECT id, conversation_id AS conversationId, direction, type, body,
-  media_key AS mediaKey, file_name AS fileName, duration, status, created_at AS createdAt FROM messages`;
+  media_key AS mediaKey, file_name AS fileName, duration, status, created_at AS createdAt,
+  edited_at AS editedAt, deleted_at AS deletedAt,
+  CASE WHEN recipient_mismatch_at IS NOT NULL THEN 1 ELSE 0 END AS recipientMismatch,
+  CASE WHEN direction = 'outbound' AND type = 'text' AND deleted_at IS NULL
+    AND recipient_mismatch_at IS NULL AND zapi_message_id IS NOT NULL AND recipient_phone IS NOT NULL AND recipient_phone NOT LIKE '%@lid'
+    AND status IN ('sent', 'delivered', 'read')
+    AND julianday('now') - julianday(created_at) BETWEEN 0 AND 15.0 / 1440
+    THEN 1 ELSE 0 END AS canEdit,
+  CASE WHEN direction = 'outbound' AND deleted_at IS NULL
+    AND recipient_mismatch_at IS NULL AND zapi_message_id IS NOT NULL AND recipient_phone IS NOT NULL AND recipient_phone NOT LIKE '%@lid'
+    AND status IN ('sent', 'delivered', 'read')
+    AND julianday('now') - julianday(created_at) BETWEEN 0 AND 2
+    THEN 1 ELSE 0 END AS canDelete FROM messages`;
 
 export function classification(value: unknown): Classification {
   if (value === "hot" || value === "warm" || value === "cold") return value;
@@ -150,11 +174,11 @@ export async function listMessages(env: AppEnv, conversationId: string, url: URL
   } else {
     statement = env.DB.prepare(`${messageSelect} WHERE conversation_id = ?1 ORDER BY created_at DESC, id DESC LIMIT ?2`).bind(conversationId, limit + 1);
   }
-  const result = await statement.all<MessageRow>();
+  const result = await statement.all<StoredMessageRow>();
   const hasMore = result.results.length > limit;
   const messages = result.results.slice(0, limit).reverse();
   const oldest = messages[0];
-  return json({ messages, hasMore, nextCursor: hasMore && oldest ? `${oldest.createdAt}|${oldest.id}` : null });
+  return json({ messages: messages.map(presentMessage), hasMore, nextCursor: hasMore && oldest ? `${oldest.createdAt}|${oldest.id}` : null });
 }
 
 export async function markConversationRead(env: AppEnv, user: SessionUser, conversationId: string): Promise<Response> {
@@ -239,15 +263,21 @@ export async function sendMessage(request: Request, env: AppEnv, user: SessionUs
   ]);
   let status: MessageRow["status"] = "sent";
   let providerId: string | null = null;
+  let recipientPhone: string | null = null;
   let failure: string | null = null;
   try {
-    providerId = await sendText(env, conversation.phone, body);
+    const sent = await sendTextDetailed(env, conversation.phone, body);
+    providerId = sent.messageId;
+    recipientPhone = sent.recipientPhone;
   } catch (reason) {
     status = "failed";
     failure = reason instanceof Error ? reason.message : "Falha no envio";
   }
-  await env.DB.prepare("UPDATE messages SET status = ?1, zapi_message_id = ?2, error_message = ?3 WHERE id = ?4").bind(status, providerId, failure, id).run();
-  const message: MessageRow = { id, conversationId, direction: "outbound", type: "text", body, mediaKey: null, fileName: null, duration: null, status, createdAt };
+  await env.DB.prepare("UPDATE messages SET status = ?1, zapi_message_id = ?2, recipient_phone = ?3, error_message = ?4 WHERE id = ?5").bind(status, providerId, recipientPhone, failure, id).run();
+  const message: MessageRow = { id, conversationId, direction: "outbound", type: "text", body, mediaKey: null, fileName: null, duration: null, status, createdAt,
+    editedAt: null, deletedAt: null, recipientMismatch: false,
+    canEdit: status === "sent" && Boolean(providerId && recipientPhone) && !isZApiLid(recipientPhone),
+    canDelete: status === "sent" && Boolean(providerId && recipientPhone) && !isZApiLid(recipientPhone) };
   await env.CHAT_ROOMS.getByName(conversationId).broadcast({ type: "message.new", message });
   await env.CHAT_ROOMS.getByName(INBOX_ROOM).broadcast({ type: "conversation.updated", conversationId });
   await audit(env, user, "message.send", "conversation", conversationId, { messageId: id, status });
@@ -296,15 +326,19 @@ export async function sendMediaMessage(request: Request, env: AppEnv, user: Sess
   ]);
   let status: MessageRow["status"] = "sent";
   let providerId: string | null = null;
+  let recipientPhone: string | null = null;
   let failure: string | null = null;
   try {
     providerId = await sendMedia(env, conversation.phone, kind, `data:${file.type || "application/octet-stream"};base64,${base64(buffer)}`, safeName, caption);
+    recipientPhone = normalizePhone(conversation.phone);
   } catch (reason) {
     status = "failed";
     failure = reason instanceof Error ? reason.message : "Falha no envio";
   }
-  await env.DB.prepare("UPDATE messages SET status = ?1, zapi_message_id = ?2, error_message = ?3 WHERE id = ?4").bind(status, providerId, failure, id).run();
-  const message: MessageRow = { id, conversationId, direction: "outbound", type: kind, body: caption, mediaKey, fileName: safeName, duration, status, createdAt };
+  await env.DB.prepare("UPDATE messages SET status = ?1, zapi_message_id = ?2, recipient_phone = ?3, error_message = ?4 WHERE id = ?5").bind(status, providerId, recipientPhone, failure, id).run();
+  const message: MessageRow = { id, conversationId, direction: "outbound", type: kind, body: caption, mediaKey, fileName: safeName, duration, status, createdAt,
+    editedAt: null, deletedAt: null, recipientMismatch: false,
+    canEdit: false, canDelete: status === "sent" && Boolean(providerId && recipientPhone) };
   await env.CHAT_ROOMS.getByName(conversationId).broadcast({ type: "message.new", message });
   await env.CHAT_ROOMS.getByName(INBOX_ROOM).broadcast({ type: "conversation.updated", conversationId });
   await audit(env, user, "message.send", "conversation", conversationId, { messageId: id, type: kind, status });
@@ -356,9 +390,10 @@ function validCpf(raw: string): boolean {
   return true;
 }
 
-export function contactInput(input: Record<string, unknown>, editing = false) {
+export function contactInput(input: Record<string, unknown>, editing = false, currentPhone?: string) {
   const name = cleanText(input.name, 120, !editing);
-  const phone = normalizePhone(input.phone);
+  const phone = editing && currentPhone && isZApiLid(currentPhone) && input.phone === currentPhone
+    ? currentPhone : normalizePhone(input.phone);
   const cpf = String(input.cpf ?? "").replace(/\D/g, "");
   if ((!editing || cpf) && !validCpf(cpf)) throw new HttpError("CPF inválido.", 422);
   const email = cleanText(input.email, 180);
@@ -395,9 +430,9 @@ export async function createContact(request: Request, env: AppEnv, user: Session
 
 export async function updateContact(request: Request, env: AppEnv, user: SessionUser, contactId: string): Promise<Response> {
   const input = await readJson<Record<string, unknown>>(request);
-  const data = contactInput(input, true);
-  const existing = await env.DB.prepare("SELECT id FROM contacts WHERE id = ?1").bind(contactId).first();
+  const existing = await env.DB.prepare("SELECT id, phone FROM contacts WHERE id = ?1").bind(contactId).first<{ id: string; phone: string }>();
   if (!existing) throw new HttpError("Cliente não encontrado.", 404);
+  const data = contactInput(input, true, existing.phone);
   const duplicate = await env.DB.prepare("SELECT id FROM contacts WHERE id <> ?1 AND (phone = ?2 OR cpf = ?3) LIMIT 1")
     .bind(contactId, data.phone, data.cpf).first();
   if (duplicate) throw new HttpError("WhatsApp ou CPF já cadastrado em outro cliente.", 409);

@@ -4,7 +4,7 @@ import { runLunaAgent } from "./luna-agent-service";
 import { saveAnalysis } from "./luna-memory";
 import { recordLunaRun } from "./luna-observability";
 import type { PassiveMessage } from "./luna-passive";
-import { sendText } from "./zapi";
+import { sendTextDetailed } from "./zapi";
 
 vi.mock("./luna-agent-service", () => ({
   LunaServiceError: class LunaServiceError extends Error {
@@ -14,21 +14,24 @@ vi.mock("./luna-agent-service", () => ({
 }));
 vi.mock("./luna-memory", () => ({ saveAnalysis: vi.fn() }));
 vi.mock("./luna-observability", () => ({ recordLunaRun: vi.fn() }));
-vi.mock("./zapi", () => ({ sendText: vi.fn() }));
+vi.mock("./zapi", () => ({ sendTextDetailed: vi.fn() }));
 
 const message: PassiveMessage = {
   id: "inbound-1", conversationId: "conversation-1", direction: "inbound", type: "text",
   body: "Olá", mediaKey: null, fileName: null, mime: null, createdAt: "2026-09-14T12:00:00.000Z",
 };
 
-function createEnv(options: { assigneeId?: string | null; claimChanges?: number; latestMessageId?: string; review?: boolean; lunaEnabled?: number } = {}) {
+function createEnv(options: { assigneeId?: string | null; claimChanges?: number; latestMessageId?: string; review?: boolean; lunaEnabled?: number; phone?: string } = {}) {
   const broadcasts: unknown[] = [];
   const batches: unknown[][] = [];
+  const bound: Array<{ sql: string; values: unknown[] }> = [];
   const statusUpdates: unknown[][] = [];
   const prepare = vi.fn((sql: string) => ({
-    bind: (...values: unknown[]) => ({
+    bind: (...values: unknown[]) => {
+      bound.push({ sql, values });
+      return {
       first: async () => {
-        if (sql.includes("c.contact_id AS contactId")) return { contactId: "client-1", phone: "5592999990000",
+        if (sql.includes("c.contact_id AS contactId")) return { contactId: "client-1", phone: options.phone ?? "5592999990000",
           assigneeId: options.assigneeId ?? null, serviceStatus: "new", lunaAutonomousEnabled: options.lunaEnabled ?? 1 };
         if (sql.includes("COUNT(*) AS count")) return { count: 0 };
         if (sql.includes("latestMessageId")) return { assigneeId: options.assigneeId ?? null, serviceStatus: "new",
@@ -41,7 +44,8 @@ function createEnv(options: { assigneeId?: string | null; claimChanges?: number;
         if (sql.includes("UPDATE luna_autonomous_replies SET status")) statusUpdates.push(values);
         return { meta: { changes: 1 } };
       },
-    }),
+      };
+    },
   }));
   const env = {
     LUNA_AUTONOMOUS_ENABLED: "true", OPENAI_API_KEY: "test-key", OPENAI_LUNA_AGENT_ID: "agent-test", ENVIRONMENT: "development",
@@ -54,14 +58,14 @@ function createEnv(options: { assigneeId?: string | null; claimChanges?: number;
       replyToClient: options.review ? null : "Olá! Sou a Luna, assistente virtual da Karrer." },
     model: "test-model", usage: { inputTokens: 10, cachedInputTokens: 0, outputTokens: 5, totalTokens: 15 }, toolCalls: 0, fileHash: "",
   });
-  return { env, batches, broadcasts, statusUpdates };
+  return { env, batches, bound, broadcasts, statusUpdates };
 }
 
 beforeEach(() => {
   vi.clearAllMocks();
   vi.mocked(saveAnalysis).mockResolvedValue(null);
   vi.mocked(recordLunaRun).mockResolvedValue(undefined);
-  vi.mocked(sendText).mockResolvedValue("provider-1");
+  vi.mocked(sendTextDetailed).mockResolvedValue({ messageId: "provider-1", recipientPhone: "5592999990000" });
 });
 
 describe("orquestração do atendimento autônomo", () => {
@@ -69,39 +73,49 @@ describe("orquestração do atendimento autônomo", () => {
     const { env } = createEnv({ lunaEnabled: 0 });
     await processAutonomousReply(env, message);
     expect(runLunaAgent).not.toHaveBeenCalled();
-    expect(sendText).not.toHaveBeenCalled();
+    expect(sendTextDetailed).not.toHaveBeenCalled();
   });
 
   it("não processa conversa que um atendente já assumiu", async () => {
     const { env } = createEnv({ assigneeId: "user-1" });
     await processAutonomousReply(env, message);
     expect(runLunaAgent).not.toHaveBeenCalled();
-    expect(sendText).not.toHaveBeenCalled();
+    expect(sendTextDetailed).not.toHaveBeenCalled();
   });
 
   it("deduplica a mesma mensagem antes de chamar a Luna", async () => {
     const { env } = createEnv({ claimChanges: 0 });
     await processAutonomousReply(env, message);
     expect(runLunaAgent).not.toHaveBeenCalled();
-    expect(sendText).not.toHaveBeenCalled();
+    expect(sendTextDetailed).not.toHaveBeenCalled();
   });
 
   it("mantém o atendimento para revisão humana sem enviar resposta", async () => {
     const { env, statusUpdates } = createEnv({ review: true });
     await processAutonomousReply(env, message);
     expect(runLunaAgent).toHaveBeenCalledOnce();
-    expect(sendText).not.toHaveBeenCalled();
+    expect(sendTextDetailed).not.toHaveBeenCalled();
     expect(statusUpdates).toContainEqual(["skipped", "AI_HUMAN_REVIEW_REQUIRED", message.id]);
   });
 
   it("envia, persiste e publica uma resposta segura", async () => {
-    const { env, batches, broadcasts } = createEnv();
+    const { env, batches, bound, broadcasts } = createEnv();
     await processAutonomousReply(env, message);
-    expect(sendText).toHaveBeenCalledWith(env, "5592999990000", "Olá! Sou a Luna, assistente virtual da Karrer.");
+    expect(sendTextDetailed).toHaveBeenCalledWith(env, "5592999990000", "Olá! Sou a Luna, assistente virtual da Karrer.");
     expect(batches).toHaveLength(1);
+    expect(bound.find(({ sql }) => sql.includes("INSERT INTO messages"))?.values.slice(3, 5)).toEqual(["provider-1", "5592999990000"]);
     expect(broadcasts).toEqual(expect.arrayContaining([
       expect.objectContaining({ type: "message.new" }),
       expect.objectContaining({ type: "conversation.updated", conversationId: "conversation-1" }),
     ]));
+  });
+
+  it("preserva o LID e não inventa identificador de envio ausente", async () => {
+    vi.mocked(sendTextDetailed).mockResolvedValue({ messageId: null, recipientPhone: "65998849469@lid" });
+    const { env, bound, broadcasts } = createEnv({ phone: "65998849469@lid" });
+    await processAutonomousReply(env, message);
+    expect(sendTextDetailed).toHaveBeenCalledWith(env, "65998849469@lid", expect.any(String));
+    expect(bound.find(({ sql }) => sql.includes("INSERT INTO messages"))?.values.slice(3, 5)).toEqual([null, "65998849469@lid"]);
+    expect(broadcasts).toContainEqual(expect.objectContaining({ type: "message.new", message: expect.objectContaining({ canEdit: false, canDelete: false }) }));
   });
 });

@@ -1,14 +1,16 @@
 import { safeEqual } from "./auth";
-import { HttpError, json, normalizePhone, readJson } from "./http";
-import { messageSelect, type MessageRow } from "./repository";
+import { HttpError, json, readJson } from "./http";
+import { audit, messageSelect, presentMessage, type StoredMessageRow } from "./repository";
 import type { AppEnv, ZApiPayload } from "./types";
 import { normalizeIncoming, normalizeStatusUpdate, storeRemoteMedia } from "./zapi";
 import { INBOX_ROOM } from "./realtime";
 import { scheduleHumanConversationMemory } from "./luna-passive";
 import { scheduleAutonomousReply } from "./luna-autonomous";
 import { scheduleAutomaticLeadClassification } from "./lead-classification";
+import { callbackMatchesRecipient, isZApiLid, normalizeZApiRecipient } from "./recipient-safety";
 
 export function presencePhoneCandidates(phone: string): string[] {
+  if (isZApiLid(phone)) return [phone];
   if (!phone.startsWith("55")) return [phone];
   const local = phone.slice(4);
   if (phone.length === 12 && /^[6-9]/.test(local)) return [phone, `${phone.slice(0, 4)}9${local}`];
@@ -23,7 +25,8 @@ export async function handleZApiWebhook(request: Request, env: AppEnv, suppliedT
 
   const payload = await readJson<ZApiPayload>(request, 2_000_000);
   if (payload.type?.toLowerCase() === "presencechatcallback") {
-    const phone = normalizePhone(payload.phone);
+    const phone = normalizeZApiRecipient(payload.phone);
+    const chatLid = payload.chatLid && isZApiLid(payload.chatLid) ? payload.chatLid.trim() : isZApiLid(phone) ? phone : "";
     const presence = payload.status?.toUpperCase();
     if (presence === "PAUSED") return json({ ok: true });
     if (!presence || !["AVAILABLE", "UNAVAILABLE", "COMPOSING", "RECORDING"].includes(presence)) return json({ ok: true });
@@ -31,8 +34,8 @@ export async function handleZApiWebhook(request: Request, env: AppEnv, suppliedT
     const lastSeenValue = payload.lastSeen && payload.lastSeen > 0 ? payload.lastSeen : Date.now();
     const lastSeenAt = new Date(lastSeenValue < 1_000_000_000_000 ? lastSeenValue * 1_000 : lastSeenValue).toISOString();
     const [primary, alternate] = presencePhoneCandidates(phone);
-    const conversation = await env.DB.prepare("SELECT c.id FROM conversations c JOIN contacts ct ON ct.id = c.contact_id WHERE ct.phone = ?1 OR ct.phone = ?2 ORDER BY CASE WHEN ct.phone = ?1 THEN 0 ELSE 1 END LIMIT 1")
-      .bind(primary, alternate ?? primary).first<{ id: string }>();
+    const conversation = await env.DB.prepare("SELECT c.id FROM conversations c JOIN contacts ct ON ct.id = c.contact_id WHERE ct.phone = ?1 OR ct.phone = ?2 OR ct.chat_lid = ?3 ORDER BY CASE WHEN ct.phone = ?1 THEN 0 WHEN ct.chat_lid = ?3 THEN 1 ELSE 2 END LIMIT 1")
+      .bind(primary, alternate ?? primary, chatLid).first<{ id: string }>();
     if (conversation) {
       await env.DB.prepare("UPDATE conversations SET online = ?1, last_seen_at = ?2, updated_at = ?3 WHERE id = ?4")
         .bind(online ? 1 : 0, lastSeenAt, new Date().toISOString(), conversation.id).run();
@@ -44,15 +47,33 @@ export async function handleZApiWebhook(request: Request, env: AppEnv, suppliedT
   const statusUpdates = normalizeStatusUpdate(payload);
   if (statusUpdates) {
     if (statusUpdates.length) {
-      const affected = await Promise.all(statusUpdates.map(({ messageId, status }) => env.DB.prepare("SELECT id, conversation_id AS conversationId FROM messages WHERE zapi_message_id = ?1")
-        .bind(messageId).first<{ id: string; conversationId: string }>().then((message) => ({ message, status }))));
-      await env.DB.batch(statusUpdates.map(({ messageId, status }) =>
-        env.DB.prepare("UPDATE messages SET status = ?1 WHERE zapi_message_id = ?2")
-          .bind(status, messageId),
+      type CallbackMessage = { id: string; conversationId: string; recipientPhone: string | null;
+        contactPhone: string; chatLid: string | null; recipientMismatchAt: string | null };
+      const affected = await Promise.all(statusUpdates.map(async ({ messageId, status }) => {
+        const message = await env.DB.prepare(`SELECT m.id, m.conversation_id AS conversationId,
+          m.recipient_phone AS recipientPhone, m.recipient_mismatch_at AS recipientMismatchAt,
+          ct.phone AS contactPhone, ct.chat_lid AS chatLid
+          FROM messages m JOIN conversations c ON c.id = m.conversation_id
+          JOIN contacts ct ON ct.id = c.contact_id WHERE m.zapi_message_id = ?1`)
+          .bind(messageId).first<CallbackMessage>();
+        const mismatch = Boolean(message?.recipientPhone && payload.phone
+          && !callbackMatchesRecipient(message.recipientPhone, payload.phone, message.contactPhone, message.chatLid));
+        return { message, status, mismatch };
+      }));
+      const known = affected.filter((item): item is typeof item & { message: CallbackMessage } => Boolean(item.message));
+      if (known.length) await env.DB.batch(known.map(({ message, status, mismatch }) =>
+        env.DB.prepare(`UPDATE messages SET status = ?1,
+          recipient_mismatch_at = CASE WHEN ?2 = 1 THEN COALESCE(recipient_mismatch_at, ?3) ELSE recipient_mismatch_at END
+          WHERE id = ?4`).bind(status, mismatch ? 1 : 0, new Date().toISOString(), message.id),
       ));
-      await Promise.all(affected.filter(({ message }) => Boolean(message)).map(async ({ message, status }) => {
-        await env.CHAT_ROOMS.getByName(message!.conversationId).broadcast({ type: "message.status", messageId: message!.id, status });
-        await env.CHAT_ROOMS.getByName(INBOX_ROOM).broadcast({ type: "conversation.updated", conversationId: message!.conversationId });
+      await Promise.all(known.map(async ({ message, status, mismatch }) => {
+        if (mismatch && !message.recipientMismatchAt) {
+          await audit(env, null, "message.recipient_mismatch", "message", message.id, { conversationId: message.conversationId });
+          const row = await env.DB.prepare(`${messageSelect} WHERE id = ?1`).bind(message.id).first<StoredMessageRow>();
+          if (row) await env.CHAT_ROOMS.getByName(message.conversationId).broadcast({ type: "message.updated", message: presentMessage(row) });
+        }
+        await env.CHAT_ROOMS.getByName(message.conversationId).broadcast({ type: "message.status", messageId: message.id, status });
+        await env.CHAT_ROOMS.getByName(INBOX_ROOM).broadcast({ type: "conversation.updated", conversationId: message.conversationId });
       }));
     }
     return json({ ok: true, updated: statusUpdates.length });
@@ -63,15 +84,22 @@ export async function handleZApiWebhook(request: Request, env: AppEnv, suppliedT
     .bind(incoming.zapiMessageId).first<{ id: string }>();
   if (existing) return json({ ok: true, duplicate: true });
 
-  let contact = await env.DB.prepare("SELECT id FROM contacts WHERE phone = ?1")
-    .bind(incoming.phone).first<{ id: string }>();
+  type ContactIdentity = { id: string; phone: string; chatLid: string | null };
+  const matches = await env.DB.prepare("SELECT id, phone, chat_lid AS chatLid FROM contacts WHERE phone = ?1 OR phone = ?2 OR chat_lid = ?2")
+    .bind(incoming.phone, incoming.chatLid ?? "").all<ContactIdentity>();
+  if (matches.results.length > 1) throw new HttpError("Telefone e LID pertencem a contatos diferentes. Recebimento interrompido.", 409);
+  let contact = matches.results[0] ?? null;
+  if (contact?.chatLid && incoming.chatLid && contact.chatLid !== incoming.chatLid) {
+    throw new HttpError("LID divergente para o contato. Recebimento interrompido.", 409);
+  }
   if (!contact) {
-    contact = { id: crypto.randomUUID() };
-    await env.DB.prepare("INSERT INTO contacts (id, phone, name) VALUES (?1, ?2, ?3)")
-      .bind(contact.id, incoming.phone, incoming.name).run();
-  } else if (incoming.name !== incoming.phone) {
-    await env.DB.prepare("UPDATE contacts SET name = COALESCE(name, ?1), updated_at = ?2 WHERE id = ?3")
-      .bind(incoming.name, new Date().toISOString(), contact.id).run();
+    contact = { id: crypto.randomUUID(), phone: incoming.phone, chatLid: incoming.chatLid };
+    await env.DB.prepare("INSERT INTO contacts (id, phone, chat_lid, name) VALUES (?1, ?2, ?3, ?4)")
+      .bind(contact.id, incoming.phone, incoming.chatLid, incoming.name).run();
+  } else {
+    const realPhone = isZApiLid(incoming.phone) ? contact.phone : incoming.phone;
+    await env.DB.prepare("UPDATE contacts SET phone = ?1, chat_lid = COALESCE(chat_lid, ?2), name = COALESCE(name, ?3), updated_at = ?4 WHERE id = ?5")
+      .bind(realPhone, incoming.chatLid, incoming.name !== incoming.phone ? incoming.name : null, new Date().toISOString(), contact.id).run();
   }
 
   let conversation = await env.DB.prepare("SELECT id FROM conversations WHERE contact_id = ?1")
@@ -104,8 +132,8 @@ export async function handleZApiWebhook(request: Request, env: AppEnv, suppliedT
       .bind(incoming.createdAt, incoming.direction, conversation.id),
   ]);
 
-  const message = await env.DB.prepare(`${messageSelect} WHERE id = ?1`).bind(messageId).first<MessageRow>();
-  if (message) await env.CHAT_ROOMS.getByName(conversation.id).broadcast({ type: "message.new", message });
+  const message = await env.DB.prepare(`${messageSelect} WHERE id = ?1`).bind(messageId).first<StoredMessageRow>();
+  if (message) await env.CHAT_ROOMS.getByName(conversation.id).broadcast({ type: "message.new", message: presentMessage(message) });
   await env.CHAT_ROOMS.getByName(INBOX_ROOM).broadcast({ type: "conversation.updated", conversationId: conversation.id });
   scheduleHumanConversationMemory(env, ctx, { id: messageId, conversationId: conversation.id, direction: incoming.direction,
     type: incoming.type, body: incoming.body, mediaKey, fileName: incoming.fileName, mime: incoming.mime, createdAt: incoming.createdAt });

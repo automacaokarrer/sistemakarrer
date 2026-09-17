@@ -426,11 +426,11 @@ test("ícone de imagem envia arquivo pelo compositor", async ({ page }) => {
   await page.getByRole("button", { name: "Enviar imagem" }).click();
   const chooser = await chooserPromise;
   await chooser.setFiles({ name: "foto.png", mimeType: "image/png", buffer: Buffer.from("imagem") });
-  await expect(page.getByRole("region", { name: "Prévia do arquivo" })).toBeVisible();
-  await expect(page.getByAltText("Prévia da imagem")).toBeVisible();
+  await expect(page.getByRole("region", { name: "Prévia dos arquivos" })).toBeVisible();
+  await expect(page.getByAltText("Prévia de foto.png")).toBeVisible();
   await page.getByLabel("Mensagem").fill("Posso continuar escrevendo durante a prévia");
   await expect(page.getByLabel("Mensagem")).toBeEditable();
-  await page.getByRole("button", { name: "Enviar arquivo" }).click();
+  await page.getByRole("button", { name: "Enviar 1 arquivo" }).click();
   await expect(page.locator('img[alt="Imagem de teste"]')).toBeVisible();
   await page.getByRole("button", { name: "Abrir imagem em tamanho completo" }).click();
   await expect(page.getByRole("dialog", { name: "Imagem em tamanho completo" })).toBeVisible();
@@ -445,6 +445,33 @@ test("ícone de imagem envia arquivo pelo compositor", async ({ page }) => {
   await expect(page.getByRole("button", { name: "Gravar áudio" })).toBeEnabled();
 });
 
+test("dois anexos são enviados para a mesma conversa com legenda apenas no primeiro", async ({ page }) => {
+  await mockDashboard(page);
+  const forms: string[] = [];
+  await page.route("**/api/conversations/conversation-1/media", async (route) => {
+    forms.push(route.request().postData() ?? "");
+    await route.fulfill({ contentType: "application/json", body: JSON.stringify({ message: {
+      id: `upload-${forms.length}`, conversationId: "conversation-1", direction: "outbound", type: "image", body: forms.length === 1 ? "Legenda única" : null,
+      fileName: `foto-${forms.length}.png`, mediaKey: null, duration: null, status: "sent", createdAt: now,
+    } }) });
+  });
+  await page.goto("/");
+  await page.getByRole("button", { name: /Maria Oliveira/ }).click();
+  await page.locator('input[type="file"][accept^="image/"]').setInputFiles([
+    { name: "foto-a.png", mimeType: "image/png", buffer: Buffer.from("imagem-a") },
+    { name: "foto-b.png", mimeType: "image/png", buffer: Buffer.from("imagem-b") },
+  ]);
+  await expect(page.getByRole("region", { name: "Prévia dos arquivos" })).toContainText("2 arquivos selecionados");
+  await page.getByLabel("Mensagem").fill("Legenda única");
+  await page.getByRole("button", { name: "Enviar 2 arquivos" }).click();
+  await expect.poll(() => forms.length).toBe(2);
+  expect(forms[0]).toContain("foto-a.png");
+  expect(forms[0]).toContain("Legenda única");
+  expect(forms[1]).toContain("foto-b.png");
+  expect(forms[1]).not.toContain("Legenda única");
+  await expect(page.getByRole("region", { name: "Prévia dos arquivos" })).toHaveCount(0);
+});
+
 test("print colado no compositor cria uma prévia e pode ser enviado", async ({ page }) => {
   await mockDashboard(page);
   await page.goto("/");
@@ -457,11 +484,11 @@ test("print colado no compositor cria uma prévia e pode ser enviado", async ({ 
     element.dispatchEvent(new ClipboardEvent("paste", { bubbles: true, cancelable: true, clipboardData: clipboard }));
   });
 
-  const preview = page.getByRole("region", { name: "Prévia do arquivo" });
+  const preview = page.getByRole("region", { name: "Prévia dos arquivos" });
   await expect(preview).toBeVisible();
-  await expect(preview.getByAltText("Prévia da imagem")).toBeVisible();
+  await expect(preview.getByAltText("Prévia de print-colado.png")).toBeVisible();
   await expect(preview).toContainText("print-colado.png");
-  await page.getByRole("button", { name: "Enviar arquivo" }).click();
+  await page.getByRole("button", { name: "Enviar 1 arquivo" }).click();
   await expect(page.locator('img[alt="Imagem de teste"]')).toBeVisible();
   await expectNoHorizontalOverflow(page);
 });
@@ -538,4 +565,58 @@ test("confirmação muda de enviado para entregue e lido em tempo real", async (
   await expect(page.locator(".message-status")).toContainText("Entregue");
   conversationSocket!.send(JSON.stringify({ type: "message.status", messageId: "outbound-1", status: "read" }));
   await expect(page.locator(".message-status")).toContainText("Lido");
+});
+
+test("trocar de conversa não leva rascunho ou anexo ao outro destinatário", async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== "desktop", "A troca direta de conversa ocorre na lista do desktop.");
+  await mockDashboard(page, () => [{
+    id: "conversation-2", contactId: "contact-2", createdAt: now, name: "João Cliente", phone: "5592888888888",
+    bank: null, stage: "Novo contato", classification: "cold", score: 0, lastMessage: null, lastMessageType: null,
+    lastMessageAt: now, unreadCount: 0, online: false, lastSeenAt: null, waitingSince: null, serviceStatus: "new",
+    assigneeId: null, assigneeName: null, avatarUrl: "", firstResponseMinutes: null, firstResponderId: null,
+    firstResponderName: null, lunaAutonomousEnabled: false,
+  }]);
+  await page.goto("/");
+  await page.getByRole("button", { name: /Maria Oliveira/ }).click();
+  await page.getByLabel("Mensagem").fill("Texto destinado à Maria");
+  await page.locator('input[type="file"][accept^="image/"]').setInputFiles({ name: "foto.png", mimeType: "image/png", buffer: Buffer.from([137, 80, 78, 71]) });
+  await expect(page.getByRole("region", { name: "Prévia dos arquivos" })).toBeVisible();
+  await page.getByRole("button", { name: /João Cliente/ }).click();
+  await expect(page.getByLabel("Mensagem")).toHaveValue("");
+  await expect(page.getByRole("region", { name: "Prévia dos arquivos" })).toHaveCount(0);
+  await expect(page.getByLabel("Destinatário do envio")).toContainText("João Cliente");
+  await expect(page.getByLabel("Destinatário do envio")).toContainText("(92) 88888-8888");
+});
+
+test("mensagem enviada pode ser editada e apagada com confirmação", async ({ page }) => {
+  let currentMessage = {
+    id: "editable-1", conversationId: "conversation-1", direction: "outbound", type: "text", body: "Mensagem original" as string | null,
+    fileName: null, mediaKey: null, duration: null, status: "sent", createdAt: now,
+    editedAt: null as string | null, deletedAt: null as string | null, canEdit: true, canDelete: true,
+  };
+  await mockDashboard(page, () => [], () => ({ messages: [currentMessage], hasMore: false, nextCursor: null }));
+  await page.route("**/api/conversations/conversation-1/messages/editable-1", async (route) => {
+    if (route.request().method() === "PATCH") {
+      const input = route.request().postDataJSON() as { body: string };
+      currentMessage = { ...currentMessage, body: input.body, editedAt: now };
+    } else if (route.request().method() === "DELETE") {
+      currentMessage = { ...currentMessage, body: null, deletedAt: now, canEdit: false, canDelete: false };
+    }
+    await route.fulfill({ contentType: "application/json", body: JSON.stringify({ message: currentMessage }) });
+  });
+  await page.goto("/");
+  await page.getByRole("button", { name: /Maria Oliveira/ }).click();
+  await page.getByRole("button", { name: "Editar", exact: true }).click();
+  await page.getByLabel("Editar mensagem").fill("Mensagem corrigida");
+  await page.getByRole("button", { name: "Salvar edição" }).click();
+  await expect(page.getByText("Mensagem corrigida")).toBeVisible();
+  await expect(page.locator(".message-edited")).toContainText("Editada");
+  await page.getByRole("button", { name: "Apagar", exact: true }).click();
+  await expect(page.getByRole("dialog", { name: "Apagar mensagem" })).toBeVisible();
+  await page.getByRole("button", { name: "Cancelar" }).click();
+  await expect(page.getByText("Mensagem corrigida")).toBeVisible();
+  await page.getByRole("button", { name: "Apagar", exact: true }).click();
+  await page.getByRole("button", { name: "Apagar para todos" }).click();
+  await expect(page.getByText("Mensagem apagada")).toBeVisible();
+  await expect(page.getByRole("button", { name: "Editar", exact: true })).toHaveCount(0);
 });

@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { HttpError } from "./http";
-import { normalizeIncoming, normalizeStatusUpdate, sendMedia, sendText } from "./zapi";
+import { deleteMessageForEveryone, editTextMessage, normalizeIncoming, normalizeStatusUpdate, sendMedia, sendText, sendTextDetailed } from "./zapi";
 import { handleZApiWebhook, presencePhoneCandidates } from "./webhook";
 
 vi.mock("./auth", () => ({ safeEqual: async () => true }));
@@ -12,6 +12,7 @@ describe("webhook Z-API", () => {
     expect(presencePhoneCandidates("559284078295")).toEqual(["559284078295", "5592984078295"]);
     expect(presencePhoneCandidates("5592984078295")).toEqual(["5592984078295", "559284078295"]);
     expect(presencePhoneCandidates("12025550123")).toEqual(["12025550123"]);
+    expect(presencePhoneCandidates("55999999@lid")).toEqual(["55999999@lid"]);
   });
   it("publica presença do contato mesmo quando o callback usa o número antigo", async () => {
     const broadcast = vi.fn(async () => undefined);
@@ -102,6 +103,55 @@ describe("webhook Z-API", () => {
     expect(providerId).toBe("za-canonical");
     expect(fetchMock).toHaveBeenCalledTimes(3);
     expect(JSON.parse(String(fetchMock.mock.calls[2]?.[1]?.body))).toMatchObject({ phone: "559284078295" });
+  });
+
+  it("registra o destinatário realmente usado após a retentativa", async () => {
+    vi.spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(new Response(null, { status: 400 }))
+      .mockResolvedValueOnce(Response.json([{ exists: true, phone: "559284078295" }]))
+      .mockResolvedValueOnce(Response.json({ messageId: "za-canonical" }));
+    const result = await sendTextDetailed({ ENVIRONMENT: "production", ZAPI_INSTANCE_ID: "instance",
+      ZAPI_INSTANCE_TOKEN: "token", ZAPI_CLIENT_TOKEN: "client" } as never, "5592984078295", "Teste");
+    expect(result).toEqual({ messageId: "za-canonical", recipientPhone: "559284078295" });
+  });
+
+  it("preserva @lid e não consulta outro número após recusa", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(Response.json({ messageId: "lid-1" }));
+    const result = await sendTextDetailed({ ENVIRONMENT: "production", ZAPI_INSTANCE_ID: "instance",
+      ZAPI_INSTANCE_TOKEN: "token", ZAPI_CLIENT_TOKEN: "client" } as never, "123456789@lid", "Teste");
+    expect(result.recipientPhone).toBe("123456789@lid");
+    expect(JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body))).toMatchObject({ phone: "123456789@lid" });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("usa o ID original e o destinatário gravado para editar e apagar para todos", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(Response.json({ messageId: "edit-operation-id" }))
+      .mockResolvedValueOnce(Response.json({ value: true }));
+    const env = { ENVIRONMENT: "production", ZAPI_INSTANCE_ID: "instance", ZAPI_INSTANCE_TOKEN: "token", ZAPI_CLIENT_TOKEN: "client" } as never;
+    await editTextMessage(env, "5592999990000", "original-id", "Texto corrigido");
+    await deleteMessageForEveryone(env, "5592999990000", "original-id");
+    expect(JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body))).toEqual({ phone: "5592999990000", message: "Texto corrigido", editMessageId: "original-id" });
+    const deleteUrl = new URL(String(fetchMock.mock.calls[1]?.[0]));
+    expect(fetchMock.mock.calls[1]?.[1]?.method).toBe("DELETE");
+    expect(deleteUrl.searchParams.get("messageId")).toBe("original-id");
+    expect(deleteUrl.searchParams.get("phone")).toBe("5592999990000");
+    expect(deleteUrl.searchParams.get("owner")).toBe("true");
+    expect(deleteUrl.searchParams.has("deleteForMe")).toBe(false);
+  });
+
+  it("não confirma exclusão quando a Z-API retorna value false", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(Response.json({ value: false }));
+    await expect(deleteMessageForEveryone({ ENVIRONMENT: "production", ZAPI_INSTANCE_ID: "instance",
+      ZAPI_INSTANCE_TOKEN: "token", ZAPI_CLIENT_TOKEN: "client" } as never, "5592999990000", "original-id"))
+      .rejects.toThrow("não confirmou");
+  });
+
+  it("aceita resposta 204 da Z-API ao apagar para todos", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(new Response(null, { status: 204 }));
+    await expect(deleteMessageForEveryone({ ENVIRONMENT: "production", ZAPI_INSTANCE_ID: "instance",
+      ZAPI_INSTANCE_TOKEN: "token", ZAPI_CLIENT_TOKEN: "client" } as never, "5592999990000", "original-id"))
+      .resolves.toBeUndefined();
   });
 
   it("envia imagem em Base64 pelo endpoint oficial", async () => {

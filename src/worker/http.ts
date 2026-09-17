@@ -35,7 +35,10 @@ export class HttpError extends Error {
 }
 
 export function normalizePhone(value: unknown): string {
-  const phone = String(value ?? "").replace(/\D/g, "");
+  if (typeof value !== "string" || !/^[+()\s\d-]+$/.test(value)) {
+    throw new HttpError("WhatsApp inválido. Use DDI, DDD e número.", 422);
+  }
+  const phone = value.replace(/\D/g, "");
   if (phone.length < 10 || phone.length > 15) throw new HttpError("WhatsApp inválido. Use DDI, DDD e número.", 422);
   return phone;
 }

@@ -80,6 +80,11 @@ export interface Message {
   duration: number | null;
   status: "sending" | "sent" | "delivered" | "read" | "received" | "failed";
   createdAt: string;
+  editedAt?: string | null;
+  deletedAt?: string | null;
+  canEdit?: boolean;
+  canDelete?: boolean;
+  recipientMismatch?: boolean;
 }
 
 export interface LeadTag {
