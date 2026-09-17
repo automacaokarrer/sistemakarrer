@@ -15,6 +15,7 @@ async function mockDashboard(
   messagePage: (url: URL) => unknown = () => ({ messages: [], hasMore: false, nextCursor: null }),
   permissions = { chat: true, leads: true, clients: true, settings: true },
 ) {
+  await page.routeWebSocket(/\/api\/team-chat\/ws$/, () => undefined);
   const user = { id: "admin-1", name: "Ana Karrer", email: "ana@karrer.test", role: "admin", avatarUrl: null, professionalRole: "Administradora", permissions };
   const conversationOverrides = new Map<string, Record<string, unknown>>();
   const availableTags = [
@@ -45,6 +46,9 @@ async function mockDashboard(
     const path = requestUrl.pathname;
     let body: unknown = { ok: true };
     if (path === "/api/auth/status") body = { setupRequired: false, user, features: { googleDrive: false } };
+    else if (path === "/api/team-chat/summary") body = { members: users.map((member) => ({ id: member.id, name: member.name, online: member.online })), unreadCount: 0, mentionCount: 0 };
+    else if (path === "/api/team-chat/messages" && route.request().method() === "GET") body = { messages: [], hasMore: false, nextCursor: null };
+    else if (path === "/api/team-chat/read") body = { lastReadId: 0 };
     else if (path === "/api/conversations") body = { conversations: [...conversations, ...additionalConversations()].map((conversation: any) => ({ ...conversation, ...(conversationOverrides.get(conversation.id) ?? {}) })) };
     else if (path === "/api/contacts") body = { contacts };
     else if (path === "/api/contacts/contact-1" && route.request().method() === "PATCH") {
@@ -116,6 +120,62 @@ test("login e cadastro público permanecem utilizáveis", async ({ page }) => {
   await expect(page.getByRole("heading", { name: "Cadastre-se" })).toBeVisible();
   await expect(page.getByLabel("Foto de perfil *")).toBeVisible();
   await expectNoHorizontalOverflow(page);
+});
+
+test("chat interno marca pessoa e toda a equipe sem cobrir a navegação", async ({ page }, testInfo) => {
+  await mockDashboard(page);
+  const submissions: string[] = [];
+  await page.route("**/api/team-chat/messages", async (route) => {
+    if (route.request().method() !== "POST") return route.fallback();
+    const data = route.request().postData() ?? "";
+    submissions.push(data);
+    const all = data.includes('name="mentionAll"\r\n\r\ntrue');
+    await route.fulfill({ contentType: "application/json", body: JSON.stringify({ message: {
+      id: submissions.length, authorId: "admin-1", authorName: "Ana Karrer", body: submissions.length === 1 ? "Pode revisar?" : "Reunião agora",
+      imageUrl: null, mentionAll: all, mentions: all ? [] : [{ id: "user-2", name: "João Lima" }], createdAt: now,
+    } }) });
+  });
+  await page.goto("/");
+  const trigger = page.getByRole("button", { name: "Chat interno da equipe" });
+  await expect(trigger).toBeVisible();
+  await trigger.click();
+  const dialog = page.getByRole("dialog", { name: "Chat interno da equipe" });
+  await expect(dialog).toBeVisible();
+  await expect(dialog).toContainText("1 online na equipe");
+  if (process.env.CAPTURE_UI) await page.screenshot({ path: `tmp/${testInfo.project.name}-team-chat.png`, fullPage: true });
+  await dialog.getByRole("button", { name: "Marcar pessoas" }).click();
+  await dialog.getByRole("option", { name: /João Lima/ }).click();
+  await expect(dialog.locator(".team-chat-selected-mentions")).toContainText("@João Lima");
+  await dialog.getByLabel("Mensagem para a equipe").fill("Pode revisar?");
+  await dialog.getByRole("button", { name: "Enviar ao chat interno" }).click();
+  await expect(dialog).toContainText("Pode revisar?");
+  expect(submissions[0]).toContain("user-2");
+  await dialog.getByRole("button", { name: "Marcar pessoas" }).click();
+  await dialog.getByRole("option", { name: "@todos" }).click();
+  await dialog.getByLabel("Mensagem para a equipe").fill("Reunião agora");
+  await dialog.getByRole("button", { name: "Enviar ao chat interno" }).click();
+  await expect(dialog).toContainText("Reunião agora");
+  expect(submissions[1]).toContain('name="mentionAll"\r\n\r\ntrue');
+  await expectNoHorizontalOverflow(page);
+  await dialog.getByRole("button", { name: "Fechar chat interno" }).click();
+  await expect(dialog).toHaveCount(0);
+  await expect(trigger).toBeVisible();
+});
+
+test("print colado no chat interno mostra prévia antes do envio", async ({ page }) => {
+  await mockDashboard(page);
+  await page.goto("/");
+  await page.getByRole("button", { name: "Chat interno da equipe" }).click();
+  const dialog = page.getByRole("dialog", { name: "Chat interno da equipe" });
+  await dialog.getByLabel("Mensagem para a equipe").evaluate((element) => {
+    const clipboard = new DataTransfer();
+    clipboard.items.add(new File([new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10])], "print.png", { type: "image/png" }));
+    element.dispatchEvent(new ClipboardEvent("paste", { bubbles: true, cancelable: true, clipboardData: clipboard }));
+  });
+  await expect(dialog.getByAltText("Prévia do print")).toBeVisible();
+  await expect(dialog.getByText("print.png")).toBeVisible();
+  await dialog.getByRole("button", { name: "Remover print" }).click();
+  await expect(dialog.getByAltText("Prévia do print")).toHaveCount(0);
 });
 
 test("painel principal abre todos os módulos autorizados", async ({ page }, testInfo) => {

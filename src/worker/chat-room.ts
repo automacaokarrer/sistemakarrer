@@ -21,11 +21,9 @@ export class ChatRoom extends DurableObject<AppEnv> {
   async webSocketMessage(socket: WebSocket, message: ArrayBuffer | string): Promise<void> {
     if (typeof message !== "string") return;
     if (message === "ping") { socket.send("pong"); return; }
-    if (message.length > 2_000) { socket.close(1009, "message too large"); return; }
-    let event: unknown;
-    try { event = JSON.parse(message); } catch { return; }
-    const payload = JSON.stringify(event);
-    for (const peer of this.ctx.getWebSockets()) if (peer !== socket) peer.send(payload);
+    // Application events are sent only by authenticated Worker routes.
+    // Clients may send heartbeat pings, never arbitrary events to peers.
+    if (message.length > 2_000) socket.close(1009, "message too large");
   }
 
   async webSocketClose(socket: WebSocket, code: number, reason: string): Promise<void> {

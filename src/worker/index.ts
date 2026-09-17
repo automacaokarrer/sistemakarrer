@@ -24,11 +24,12 @@ import type { AppEnv } from "./types";
 import { handleZApiWebhook } from "./webhook";
 import { createUser, deleteUser, getUserAvatar, listLeadAttendants, listUsers, registerUser, sendPasswordReset, updateUserAccess } from "./settings";
 import { uploadContactDocuments } from "./drive";
-import { INBOX_ROOM } from "./realtime";
+import { INBOX_ROOM, TEAM_ROOM } from "./realtime";
 import { handleLunaRequest } from "./luna";
 import { listConversationTags, updateConversationTag } from "./tags";
 import { getLinkPreview } from "./link-preview";
 import { deleteMessage, editMessage } from "./message-actions";
+import { getTeamImage, listTeamMessages, markTeamRead, postTeamMessage, teamChatSummary } from "./team-chat";
 
 function withCookie(payload: unknown, cookie: string, status = 200): Response {
   return json(payload, { status, headers: { "Set-Cookie": cookie } });
@@ -73,6 +74,13 @@ async function routeApi(request: Request, env: AppEnv, ctx: ExecutionContext): P
     return json({ ok: true });
   }
   if (method === "GET" && pathname === "/api/account/avatar") return getUserAvatar(env, user.id);
+  if (method === "GET" && pathname === "/api/team-chat/summary") return teamChatSummary(env, user);
+  if (method === "GET" && pathname === "/api/team-chat/messages") return listTeamMessages(env, url);
+  if (method === "POST" && pathname === "/api/team-chat/messages") return postTeamMessage(request, env, user);
+  if (method === "POST" && pathname === "/api/team-chat/read") return markTeamRead(request, env, user);
+  if (method === "GET" && pathname === "/api/team-chat/ws") return env.CHAT_ROOMS.getByName(TEAM_ROOM).fetch(request);
+  const teamImage = routeMatch(pathname, /^\/api\/team-chat\/messages\/([^/]+)\/image$/);
+  if (method === "GET" && teamImage) return getTeamImage(env, teamImage[1]);
   if (method === "GET" && pathname === "/api/link-preview") {
     requireAnyPermission(user, ["chat", "leads"]);
     return getLinkPreview(url);

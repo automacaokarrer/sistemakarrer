@@ -14,6 +14,7 @@ import {
   KeyRound,
   Mail,
   MessageCircle,
+  MessageSquare,
   Mic,
   Paperclip,
   Pause,
@@ -33,6 +34,7 @@ import { ClipboardEvent, FocusEvent, FormEvent, useCallback, useEffect, useRef, 
 import { createPortal } from "react-dom";
 import { api, formatResponseDuration, formatTime, initials } from "./api";
 import type { AuthStatus, Classification, Contact, Conversation, LeadAttendant, LeadTag, LeadTagHistory, ManagedUser, Message, Permissions, ServiceStatus, User } from "./types";
+import { TeamChat } from "./TeamChat";
 
 type View = "chat" | "leads" | "clients" | "lead" | "settings";
 type PendingAttachment = { id: string; file: File; kind: "image" | "audio" | "document"; previewUrl: string | null; duration?: number };
@@ -189,6 +191,10 @@ function Dashboard({ user, googleDrive, onLogout }: { user: User; googleDrive: b
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [contacts, setContacts] = useState<Contact[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [teamChatOpen, setTeamChatOpen] = useState(false);
+  const [teamUnread, setTeamUnread] = useState(0);
+  const [teamMentions, setTeamMentions] = useState(0);
+  const updateTeamCounts = useCallback((unread: number, mentions: number) => { setTeamUnread(unread); setTeamMentions(mentions); }, []);
   const [loading, setLoading] = useState(user.permissions.chat || user.permissions.leads);
   const conversationsLoaded = useRef(false);
   const reloadSequence = useRef(0);
@@ -321,7 +327,7 @@ function Dashboard({ user, googleDrive, onLogout }: { user: User; googleDrive: b
 
   return (
     <div className="app-shell">
-      <Sidebar view={view} user={user} unread={conversations.reduce((sum, item) => sum + item.unreadCount, 0)} onNavigate={navigate} onLogout={logout} />
+      <Sidebar view={view} user={user} unread={conversations.reduce((sum, item) => sum + item.unreadCount, 0)} teamUnread={teamUnread} teamMentions={teamMentions} teamChatOpen={teamChatOpen} onTeamChat={() => setTeamChatOpen((current) => !current)} onNavigate={navigate} onLogout={logout} />
       <main className="workspace">
         {loading ? <div className="page-loader"><LoaderCircle className="spin" /> Carregando atendimento...</div> : null}
         {view === "chat" && user.permissions.chat && <ChatPage currentUser={user} conversations={conversations} selected={selected} onSelect={setSelectedId} onOpenLead={() => setView("lead")} onRefresh={reloadConversations} />}
@@ -330,11 +336,12 @@ function Dashboard({ user, googleDrive, onLogout }: { user: User; googleDrive: b
         {view === "clients" && user.permissions.clients && <ClientsPage contacts={contacts} googleDrive={googleDrive} onRefresh={refreshClients} />}
         {view === "settings" && user.role === "admin" && <SettingsPage currentUser={user} />}
       </main>
+      <TeamChat user={user} open={teamChatOpen} onClose={() => setTeamChatOpen(false)} onCounts={updateTeamCounts} />
     </div>
   );
 }
 
-function Sidebar({ view, user, unread, onNavigate, onLogout }: { view: View; user: User; unread: number; onNavigate: (view: View) => void; onLogout: () => Promise<void> }) {
+function Sidebar({ view, user, unread, teamUnread, teamMentions, teamChatOpen, onTeamChat, onNavigate, onLogout }: { view: View; user: User; unread: number; teamUnread: number; teamMentions: number; teamChatOpen: boolean; onTeamChat: () => void; onNavigate: (view: View) => void; onLogout: () => Promise<void> }) {
   const allItems: Array<{ id: View; label: string; icon: typeof MessageCircle; allowed: boolean }> = [
     { id: "chat", label: "Chat de atendimento", icon: MessageCircle, allowed: user.permissions.chat },
     { id: "leads", label: "Leads", icon: Users, allowed: user.permissions.leads },
@@ -353,6 +360,7 @@ function Sidebar({ view, user, unread, onNavigate, onLogout }: { view: View; use
               <Icon size={18} /><span>{label}</span>{id === "chat" && unread > 0 && <b>{unread}</b>}
             </button>
           ))}
+          <button type="button" className={`team-nav ${teamChatOpen ? "active" : ""}`} aria-label="Chat interno da equipe" aria-expanded={teamChatOpen} data-mobile-label="Equipe" title={teamMentions ? `${teamMentions} menções não lidas` : "Chat interno da equipe"} onClick={onTeamChat}><MessageSquare size={18} /><span>Equipe</span>{teamUnread > 0 && <b className={teamMentions ? "team-nav-mentioned" : ""}>{teamUnread > 99 ? "99+" : teamUnread}</b>}</button>
         </nav>
         <div className="sidebar-footer">
           <div className="sidebar-user">
