@@ -68,7 +68,8 @@ export async function handleZApiWebhook(request: Request, env: AppEnv, suppliedT
       ));
       await Promise.all(known.map(async ({ message, status, mismatch }) => {
         if (mismatch && !message.recipientMismatchAt) {
-          await audit(env, null, "message.recipient_mismatch", "message", message.id, { conversationId: message.conversationId });
+          await audit(env, null, "message.recipient_mismatch", "message", message.id, { conversationId: message.conversationId,
+            recordedRecipient: message.recipientPhone, reportedByZApi: payload.phone, contactPhone: message.contactPhone, contactLid: message.chatLid });
           const row = await env.DB.prepare(`${messageSelect} WHERE id = ?1`).bind(message.id).first<StoredMessageRow>();
           if (row) await env.CHAT_ROOMS.getByName(message.conversationId).broadcast({ type: "message.updated", message: presentMessage(row) });
         }
