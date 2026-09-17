@@ -5,6 +5,7 @@
 .dev.vars
 .dev.vars.*
 !.dev.vars.example
+.claude/settings.local.json
 
 # Dependências e artefatos locais
 node_modules/
