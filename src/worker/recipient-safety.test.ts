@@ -24,13 +24,16 @@ describe("assertSameWhatsAppRecipient", () => {
   it("preserva o LID completo e não confunde seus dígitos com telefone", () => {
     expect(normalizeZApiRecipient("65998849469@lid")).toBe("65998849469@lid");
     expect(assertSameWhatsAppRecipient("65998849469@lid", "65998849469@lid")).toBe("65998849469@lid");
-    expect(() => normalizeZApiRecipient("65998849469@c.us")).toThrow(HttpError);
+    expect(normalizeZApiRecipient("5592984078295@c.us")).toBe("5592984078295");
+    expect(normalizeZApiRecipient("5592984078295@s.whatsapp.net")).toBe("5592984078295");
     expect(() => normalizePhone("65998849469@lid")).toThrow(HttpError);
     expect(() => assertSameWhatsAppRecipient("65998849469@lid", "65998849469")).toThrow(HttpError);
   });
 
   it("reconhece callback pelo LID vinculado sem aceitar outro contato", () => {
     expect(callbackMatchesRecipient("5592984078295", "65998849469@lid", "559284078295", "65998849469@lid")).toBe(true);
+    expect(callbackMatchesRecipient("5592984078295", "65998849469", "559284078295", "65998849469@lid")).toBe(true);
+    expect(callbackMatchesRecipient("5592984078295", "5592984078295@c.us", "559284078295", "65998849469@lid")).toBe(true);
     expect(callbackMatchesRecipient("65998849469@lid", "5592984078295", "559284078295", "65998849469@lid")).toBe(true);
     expect(callbackMatchesRecipient("5592984078295", "12345678901@lid", "559284078295", "65998849469@lid")).toBe(false);
     expect(callbackMatchesRecipient("5592984078295", "559284078296", "559284078295", "65998849469@lid")).toBe(false);

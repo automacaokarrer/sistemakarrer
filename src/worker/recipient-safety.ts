@@ -4,9 +4,14 @@ export function isZApiLid(value: unknown): value is `${number}@lid` {
   return typeof value === "string" && /^\d{5,20}@lid$/.test(value.trim());
 }
 
-/** Z-API accepts either a telephone number or the full private @lid address. */
+function isZApiPhoneJid(value: unknown): value is string {
+  return typeof value === "string" && /^\d{10,15}@(c\.us|s\.whatsapp\.net)$/.test(value.trim());
+}
+
+/** Z-API accepts a telephone number, a public phone JID or the full private @lid address. */
 export function normalizeZApiRecipient(value: unknown): string {
   if (isZApiLid(value)) return value.trim();
+  if (isZApiPhoneJid(value)) return normalizePhone(value.trim().replace(/@(c\.us|s\.whatsapp\.net)$/, ""));
   if (typeof value !== "string" || !/^[+()\s\d-]+$/.test(value)) {
     throw new HttpError("Identificador de WhatsApp inválido.", 422);
   }
@@ -44,7 +49,7 @@ export function assertSameWhatsAppRecipient(requested: string, resolved: unknown
 
 /** A callback may identify a known contact by its private LID instead of its number. */
 export function callbackMatchesRecipient(sentTo: string, reported: unknown, contactPhone: string, contactLid: string | null): boolean {
-  let callbackAddress: string;
+  let callbackAddress: string | null = null;
   try {
     callbackAddress = normalizeZApiRecipient(reported);
     assertSameWhatsAppRecipient(sentTo, callbackAddress);
@@ -53,18 +58,21 @@ export function callbackMatchesRecipient(sentTo: string, reported: unknown, cont
     try {
       callbackAddress = normalizeZApiRecipient(reported);
     } catch {
-      return false;
+      callbackAddress = null;
     }
   }
 
   if (!contactLid || !isZApiLid(contactLid)) return false;
+  const reportedValue = typeof reported === "string" ? reported.trim() : "";
+  const contactLidDigits = contactLid.slice(0, -4);
+  const reportedLid = reportedValue === contactLid || reportedValue === contactLidDigits ? contactLid : null;
   const sentLid = isZApiLid(sentTo);
-  const callbackLid = isZApiLid(callbackAddress);
+  const callbackLid = Boolean(reportedLid) || Boolean(callbackAddress && isZApiLid(callbackAddress));
   if (sentLid === callbackLid) return false;
   try {
     return sentLid
-      ? sentTo === contactLid && assertSameWhatsAppRecipient(contactPhone, callbackAddress) === callbackAddress
-      : callbackAddress === contactLid && assertSameWhatsAppRecipient(contactPhone, sentTo) === sentTo;
+      ? sentTo === contactLid && (reportedLid === contactLid || (callbackAddress !== null && assertSameWhatsAppRecipient(contactPhone, callbackAddress) === callbackAddress))
+      : reportedLid === contactLid && assertSameWhatsAppRecipient(contactPhone, sentTo) === sentTo;
   } catch {
     return false;
   }

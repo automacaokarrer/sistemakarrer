@@ -110,6 +110,7 @@ Enquanto esses três bindings não estiverem configurados, a interface mantém o
 
 ## Testes e navegador
 
+- Em 21 de setembro de 2026, a verificacao de destinatario dos callbacks Z-API passou a normalizar JIDs publicos `@c.us`/`@s.whatsapp.net` e a reconhecer um LID sem sufixo somente quando coincide com o LID ja vinculado ao contato. Isso evita falso alerta para o contato correto e preserva o bloqueio para destinatarios diferentes; a mudanca local passou por 98 testes unitarios, typecheck e build.
 - Playwright e Chromium estão instalados para testes locais.
 - Configuração: `playwright.config.ts`.
 - Testes E2E: `tests/e2e/ui.spec.ts`.

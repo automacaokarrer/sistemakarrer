@@ -91,4 +91,18 @@ describe("identidade do destinatário Z-API", () => {
       expect(sqlite.prepare("SELECT recipient_phone AS recipientPhone FROM messages WHERE id = 'message-2'").get()).toEqual({ recipientPhone: null });
     } finally { sqlite.close(); }
   });
+
+  it("does not flag a public JID for the same phone", async () => {
+    const { sqlite, callback } = testEnvironment();
+    try {
+      sqlite.prepare("INSERT INTO contacts (id, phone) VALUES (?, ?)").run("contact-1", "5531992078787");
+      sqlite.prepare("INSERT INTO conversations (id, contact_id) VALUES (?, ?)").run("conversation-1", "contact-1");
+      sqlite.prepare(`INSERT INTO messages (id, conversation_id, direction, type, body, status, zapi_message_id, recipient_phone)
+        VALUES (?, ?, 'outbound', 'text', 'Teste', 'sent', ?, ?)`).run("message-1", "conversation-1", "provider-1", "5531992078787");
+
+      await callback({ type: "MessageStatusCallback", ids: ["provider-1"], status: "RECEIVED", phone: "5531992078787@c.us" });
+      expect(sqlite.prepare("SELECT recipient_mismatch_at IS NOT NULL AS mismatch FROM messages WHERE id = ?").get("message-1"))
+        .toEqual({ mismatch: 0 });
+    } finally { sqlite.close(); }
+  });
 });
