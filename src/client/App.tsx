@@ -73,6 +73,16 @@ function App() {
   const [auth, setAuth] = useState<AuthStatus | null>(null);
   const [authError, setAuthError] = useState("");
 
+  useEffect(() => {
+    const prime = () => primeNotificationSound();
+    window.addEventListener("pointerdown", prime, { passive: true });
+    window.addEventListener("keydown", prime);
+    return () => {
+      window.removeEventListener("pointerdown", prime);
+      window.removeEventListener("keydown", prime);
+    };
+  }, []);
+
   const loadAuth = useCallback(async () => {
     setAuthError("");
     try {
@@ -206,16 +216,6 @@ function Dashboard({ user, googleDrive, onLogout }: { user: User; googleDrive: b
   const conversationsLoaded = useRef(false);
   const reloadSequence = useRef(0);
 
-  useEffect(() => {
-    const prime = () => primeNotificationSound();
-    window.addEventListener("pointerdown", prime, { passive: true });
-    window.addEventListener("keydown", prime);
-    return () => {
-      window.removeEventListener("pointerdown", prime);
-      window.removeEventListener("keydown", prime);
-    };
-  }, []);
-
   const reloadConversations = useCallback(async () => {
     const sequence = ++reloadSequence.current;
     if (!conversationsLoaded.current) setLoading(true);
@@ -284,7 +284,7 @@ function Dashboard({ user, googleDrive, onLogout }: { user: User; googleDrive: b
         if (event.data === "pong") { awaitingPong = false; return; }
         try {
           const data = JSON.parse(event.data) as { type?: string };
-          if (data.type === "message.incoming") playNotificationSound(0.085);
+          if (data.type === "message.incoming") playNotificationSound(0.18);
           if (data.type === "conversation.updated") scheduleRefresh();
         } catch { /* mensagens de controle são ignoradas */ }
       };
