@@ -18,6 +18,16 @@ export function presencePhoneCandidates(phone: string): string[] {
   return [phone];
 }
 
+async function claimInboundEvent(env: AppEnv, messageId: string): Promise<boolean> {
+  const now = new Date().toISOString();
+  const expiresAt = new Date(Date.now() + 30_000).toISOString();
+  const result = await env.DB.prepare(`INSERT INTO zapi_event_locks (event_key, expires_at)
+    VALUES (?1, ?2)
+    ON CONFLICT(event_key) DO UPDATE SET expires_at = excluded.expires_at
+    WHERE zapi_event_locks.expires_at <= ?3`).bind(`message:${messageId}`, expiresAt, now).run();
+  return Boolean(result.meta.changes);
+}
+
 export async function handleZApiWebhook(request: Request, env: AppEnv, suppliedToken: string,
   ctx?: ExecutionContext): Promise<Response> {
   if (!env.ZAPI_WEBHOOK_TOKEN) throw new HttpError("Webhook Z-API ainda não configurado.", 503);
@@ -84,9 +94,10 @@ export async function handleZApiWebhook(request: Request, env: AppEnv, suppliedT
   const existing = await env.DB.prepare("SELECT id FROM messages WHERE zapi_message_id = ?1")
     .bind(incoming.zapiMessageId).first<{ id: string }>();
   if (existing) return json({ ok: true, duplicate: true });
+  if (!(await claimInboundEvent(env, incoming.zapiMessageId))) return json({ ok: true, duplicate: true, processing: true });
 
-  type ContactIdentity = { id: string; phone: string; chatLid: string | null };
-  const matches = await env.DB.prepare("SELECT id, phone, chat_lid AS chatLid FROM contacts WHERE phone = ?1 OR phone = ?2 OR chat_lid = ?2")
+  type ContactIdentity = { id: string; phone: string; chatLid: string | null; name: string | null };
+  const matches = await env.DB.prepare("SELECT id, phone, chat_lid AS chatLid, name FROM contacts WHERE phone = ?1 OR phone = ?2 OR chat_lid = ?2")
     .bind(incoming.phone, incoming.chatLid ?? "").all<ContactIdentity>();
   if (matches.results.length > 1) throw new HttpError("Telefone e LID pertencem a contatos diferentes. Recebimento interrompido.", 409);
   let contact = matches.results[0] ?? null;
@@ -94,13 +105,15 @@ export async function handleZApiWebhook(request: Request, env: AppEnv, suppliedT
     throw new HttpError("LID divergente para o contato. Recebimento interrompido.", 409);
   }
   if (!contact) {
-    contact = { id: crypto.randomUUID(), phone: incoming.phone, chatLid: incoming.chatLid };
+    contact = { id: crypto.randomUUID(), phone: incoming.phone, chatLid: incoming.chatLid, name: null };
     await env.DB.prepare("INSERT INTO contacts (id, phone, chat_lid, name) VALUES (?1, ?2, ?3, ?4)")
       .bind(contact.id, incoming.phone, incoming.chatLid, incoming.name).run();
   } else {
     const realPhone = isZApiLid(incoming.phone) ? contact.phone : incoming.phone;
-    await env.DB.prepare("UPDATE contacts SET phone = ?1, chat_lid = COALESCE(chat_lid, ?2), name = COALESCE(name, ?3), updated_at = ?4 WHERE id = ?5")
-      .bind(realPhone, incoming.chatLid, incoming.name !== incoming.phone ? incoming.name : null, new Date().toISOString(), contact.id).run();
+    const placeholderName = !contact.name || contact.name === contact.phone || contact.name === contact.chatLid || isZApiLid(contact.name);
+    const nextName = incoming.name && placeholderName ? incoming.name : contact.name;
+    await env.DB.prepare("UPDATE contacts SET phone = ?1, chat_lid = COALESCE(chat_lid, ?2), name = ?3, updated_at = ?4 WHERE id = ?5")
+      .bind(realPhone, incoming.chatLid, nextName, new Date().toISOString(), contact.id).run();
   }
 
   let conversation = await env.DB.prepare("SELECT id FROM conversations WHERE contact_id = ?1")
@@ -135,6 +148,7 @@ export async function handleZApiWebhook(request: Request, env: AppEnv, suppliedT
 
   const message = await env.DB.prepare(`${messageSelect} WHERE id = ?1`).bind(messageId).first<StoredMessageRow>();
   if (message) await env.CHAT_ROOMS.getByName(conversation.id).broadcast({ type: "message.new", message: presentMessage(message) });
+  if (incoming.direction === "inbound") await env.CHAT_ROOMS.getByName(INBOX_ROOM).broadcast({ type: "message.incoming", conversationId: conversation.id });
   await env.CHAT_ROOMS.getByName(INBOX_ROOM).broadcast({ type: "conversation.updated", conversationId: conversation.id });
   scheduleHumanConversationMemory(env, ctx, { id: messageId, conversationId: conversation.id, direction: incoming.direction,
     type: incoming.type, body: incoming.body, mediaKey, fileName: incoming.fileName, mime: incoming.mime, createdAt: incoming.createdAt });

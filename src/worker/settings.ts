@@ -45,7 +45,7 @@ function managedUser(row: ManagedUserRow) {
       chat: elevated || Boolean(row.canChat),
       leads: elevated || Boolean(row.canLeads),
       clients: elevated || Boolean(row.canClients),
-      settings: elevated || Boolean(row.canSettings),
+      settings: elevated,
     },
   };
 }
@@ -56,8 +56,14 @@ function permissions(value: unknown): Permissions {
     chat: input.chat === true,
     leads: input.leads === true,
     clients: input.clients === true,
-    settings: input.settings === true,
+    settings: false,
   };
+}
+
+function managedRole(value: unknown, fallback: SessionUser["role"]): "manager" | "attendant" {
+  if (value === undefined) return fallback === "manager" ? "manager" : "attendant";
+  if (value !== "manager" && value !== "attendant") throw new HttpError("Selecione uma função de acesso válida.", 422);
+  return value;
 }
 
 export async function listUsers(env: AppEnv): Promise<Response> {
@@ -71,6 +77,13 @@ export async function listUsers(env: AppEnv): Promise<Response> {
     GROUP BY u.id ORDER BY u.role = 'admin' DESC, u.name COLLATE NOCASE`)
     .bind(onlineSince, new Date().toISOString()).all<ManagedUserRow>();
   return json({ users: result.results.map(managedUser) });
+}
+
+export async function listChatAttendants(env: AppEnv): Promise<Response> {
+  const result = await env.DB.prepare(`SELECT id, name FROM users
+    WHERE active = 1 AND email_verified = 1 AND (role = 'admin' OR can_chat = 1)
+    ORDER BY name COLLATE NOCASE`).all<{ id: string; name: string }>();
+  return json({ attendants: result.results });
 }
 
 export async function listLeadAttendants(env: AppEnv): Promise<Response> {
@@ -189,17 +202,18 @@ export async function updateUserAccess(request: Request, env: AppEnv, actor: Ses
   const target = await env.DB.prepare("SELECT role FROM users WHERE id = ?1").bind(userId).first<{ role: SessionUser["role"] }>();
   if (!target) throw new HttpError("Usuário não encontrado.", 404);
   if (target.role === "admin") throw new HttpError("O administrador mestre sempre possui acesso total.", 422);
-  const input = await readJson<{ active?: unknown; permissions?: unknown }>(request);
+  const input = await readJson<{ active?: unknown; permissions?: unknown; role?: unknown }>(request);
+  const role = managedRole(input.role, target.role);
   const access = permissions(input.permissions);
   const active = input.active === true;
-  if (active && !access.chat && !access.leads && !access.clients && !access.settings) throw new HttpError("Selecione pelo menos um acesso.", 422);
+  if (active && role === "attendant" && !access.chat && !access.leads && !access.clients) throw new HttpError("Selecione pelo menos um acesso.", 422);
   await env.DB.batch([
-    env.DB.prepare(`UPDATE users SET active = ?1, can_chat = ?2, can_leads = ?3, can_clients = ?4,
-      can_settings = ?5, updated_at = ?6 WHERE id = ?7`)
-      .bind(Number(active), Number(access.chat), Number(access.leads), Number(access.clients), Number(access.settings), new Date().toISOString(), userId),
+    env.DB.prepare(`UPDATE users SET role = ?1, active = ?2, can_chat = ?3, can_leads = ?4, can_clients = ?5,
+      can_settings = 0, updated_at = ?6 WHERE id = ?7`)
+      .bind(role, Number(active), Number(access.chat), Number(access.leads), Number(access.clients), new Date().toISOString(), userId),
     ...(active ? [] : [env.DB.prepare("DELETE FROM sessions WHERE user_id = ?1").bind(userId)]),
   ]);
-  await audit(env, actor, "user.access.update", "user", userId, { active, permissions: access });
+  await audit(env, actor, "user.access.update", "user", userId, { active, role, permissions: access });
   return json({ ok: true });
 }
 

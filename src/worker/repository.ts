@@ -248,19 +248,76 @@ export async function updateConversationStatus(request: Request, env: AppEnv, us
   return json({ ok: true, status });
 }
 
+type SendDedupeReservation = { key: string; retry: boolean; replay: MessageRow | null };
+
+function dedupeKey(value: unknown): string {
+  const key = cleanText(value, 160) ?? crypto.randomUUID();
+  if (!/^[a-zA-Z0-9:_-]+$/.test(key)) throw new HttpError("Identificador de envio invalido.", 422);
+  return key;
+}
+
+async function requestHash(parts: string[]): Promise<string> {
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(parts.join("\u001f")));
+  return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("");
+}
+
+async function bufferHash(buffer: ArrayBuffer): Promise<string> {
+  const digest = await crypto.subtle.digest("SHA-256", buffer);
+  return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("");
+}
+
+async function reserveSend(env: AppEnv, key: string, hash: string): Promise<SendDedupeReservation> {
+  const inserted = await env.DB.prepare(`INSERT INTO zapi_send_dedupe (dedupe_key, request_hash, status)
+    VALUES (?1, ?2, 'pending') ON CONFLICT(dedupe_key) DO NOTHING`).bind(key, hash).run();
+  if (inserted.meta.changes) return { key, retry: false, replay: null };
+
+  const existing = await env.DB.prepare(`SELECT request_hash AS requestHash, status, message_id AS messageId
+    FROM zapi_send_dedupe WHERE dedupe_key = ?1`).bind(key).first<{ requestHash: string; status: string; messageId: string | null }>();
+  if (!existing) throw new HttpError("Nao foi possivel reservar o envio.", 503);
+  if (existing.requestHash !== hash) throw new HttpError("A chave de envio ja foi usada para outro conteudo.", 409);
+  if (existing.status === "done") {
+    const replay = existing.messageId
+      ? await env.DB.prepare(`${messageSelect} WHERE id = ?1`).bind(existing.messageId).first<StoredMessageRow>()
+      : null;
+    if (replay) return { key, retry: false, replay: presentMessage(replay) };
+    throw new HttpError("O envio ja foi concluido, mas seu registro nao esta disponivel.", 409);
+  }
+  if (existing.status === "pending") throw new HttpError("Este envio ja esta em processamento.", 409);
+  if (existing.status === "uncertain") throw new HttpError("O resultado deste envio e incerto. Confira o WhatsApp antes de tentar novamente.", 409);
+  await env.DB.prepare(`UPDATE zapi_send_dedupe SET status = 'pending', error_code = NULL,
+    updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE dedupe_key = ?1`).bind(key).run();
+  return { key, retry: true, replay: null };
+}
+
+async function updateSendDedupe(env: AppEnv, key: string, values: { status: "pending" | "done" | "failed" | "uncertain"; messageId?: string | null; providerMessageId?: string | null; recipientPhone?: string | null; errorCode?: string | null }): Promise<void> {
+  await env.DB.prepare(`UPDATE zapi_send_dedupe SET status = ?1, message_id = COALESCE(?2, message_id),
+    provider_message_id = ?3, recipient_phone = ?4, error_code = ?5,
+    updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE dedupe_key = ?6`)
+    .bind(values.status, values.messageId ?? null, values.providerMessageId ?? null, values.recipientPhone ?? null, values.errorCode ?? null, key).run();
+}
+
+function sendFailureCode(reason: unknown): string {
+  return reason instanceof HttpError ? `HTTP_${reason.status}` : "UNKNOWN_ERROR";
+}
+
 export async function sendMessage(request: Request, env: AppEnv, user: SessionUser, conversationId: string,
   ctx?: ExecutionContext): Promise<Response> {
-  const input = await readJson<{ body?: unknown }>(request);
+  const input = await readJson<{ body?: unknown; dedupeKey?: unknown }>(request);
   const body = cleanText(input.body, 10_000, true)!;
+  const key = dedupeKey(input.dedupeKey);
+  const hash = await requestHash([conversationId, "text", body]);
   const conversation = await env.DB.prepare("SELECT ct.phone FROM conversations c JOIN contacts ct ON ct.id = c.contact_id WHERE c.id = ?1")
     .bind(conversationId).first<{ phone: string }>();
   if (!conversation) throw new HttpError("Conversa não encontrada.", 404);
+  const reservation = await reserveSend(env, key, hash);
+  if (reservation.replay) return json({ message: reservation.replay });
   const id = crypto.randomUUID();
   const createdAt = new Date().toISOString();
   await env.DB.batch([
     env.DB.prepare("INSERT INTO messages (id, conversation_id, sender_user_id, direction, type, body, status, created_at) VALUES (?1, ?2, ?3, 'outbound', 'text', ?4, 'sending', ?5)").bind(id, conversationId, user.id, body, createdAt),
     env.DB.prepare("UPDATE conversations SET last_message_at = ?1, service_status = CASE WHEN service_status IN ('new', 'resolved') THEN 'in_progress' ELSE service_status END, updated_at = ?1 WHERE id = ?2").bind(createdAt, conversationId),
   ]);
+  await updateSendDedupe(env, key, { status: "pending", messageId: id });
   let status: MessageRow["status"] = "sent";
   let providerId: string | null = null;
   let recipientPhone: string | null = null;
@@ -274,6 +331,9 @@ export async function sendMessage(request: Request, env: AppEnv, user: SessionUs
     failure = reason instanceof Error ? reason.message : "Falha no envio";
   }
   await env.DB.prepare("UPDATE messages SET status = ?1, zapi_message_id = ?2, recipient_phone = ?3, error_message = ?4 WHERE id = ?5").bind(status, providerId, recipientPhone, failure, id).run();
+  await updateSendDedupe(env, key, { status: failure && failure.includes("prazo") ? "uncertain" : status === "failed" ? "failed" : "done",
+    messageId: id, providerMessageId: providerId, recipientPhone,
+    errorCode: failure ? sendFailureCode(new HttpError(failure, failure.includes("prazo") ? 504 : 502)) : null });
   const message: MessageRow = { id, conversationId, direction: "outbound", type: "text", body, mediaKey: null, fileName: null, duration: null, status, createdAt,
     editedAt: null, deletedAt: null, recipientMismatch: false,
     canEdit: status === "sent" && Boolean(providerId && recipientPhone) && !isZApiLid(recipientPhone),
@@ -315,8 +375,12 @@ export async function sendMediaMessage(request: Request, env: AppEnv, user: Sess
 
   const id = crypto.randomUUID();
   const createdAt = new Date().toISOString();
-  const mediaKey = `uploads/${createdAt.slice(0, 10)}/${id}-${safeName}`;
+  const key = dedupeKey(form.get("dedupeKey"));
   const buffer = await file.arrayBuffer();
+  const hash = await requestHash([conversationId, String(kind), safeName, caption ?? "", String(file.size), file.type, await bufferHash(buffer)]);
+  const reservation = await reserveSend(env, key, hash);
+  if (reservation.replay) return json({ message: reservation.replay });
+  const mediaKey = `uploads/${createdAt.slice(0, 10)}/${id}-${safeName}`;
   await env.MEDIA.put(mediaKey, buffer, { httpMetadata: { contentType: file.type || "application/octet-stream" }, customMetadata: { uploadedBy: user.id } });
   await env.DB.batch([
     env.DB.prepare(`INSERT INTO messages (id, conversation_id, sender_user_id, direction, type, body, media_key, file_name, mime, size, duration, status, created_at)
@@ -324,6 +388,7 @@ export async function sendMediaMessage(request: Request, env: AppEnv, user: Sess
       .bind(id, conversationId, user.id, kind, caption, mediaKey, safeName, file.type || "application/octet-stream", file.size, duration, createdAt),
     env.DB.prepare("UPDATE conversations SET last_message_at = ?1, service_status = CASE WHEN service_status IN ('new', 'resolved') THEN 'in_progress' ELSE service_status END, updated_at = ?1 WHERE id = ?2").bind(createdAt, conversationId),
   ]);
+  await updateSendDedupe(env, key, { status: "pending", messageId: id });
   let status: MessageRow["status"] = "sent";
   let providerId: string | null = null;
   let recipientPhone: string | null = null;
@@ -336,6 +401,9 @@ export async function sendMediaMessage(request: Request, env: AppEnv, user: Sess
     failure = reason instanceof Error ? reason.message : "Falha no envio";
   }
   await env.DB.prepare("UPDATE messages SET status = ?1, zapi_message_id = ?2, recipient_phone = ?3, error_message = ?4 WHERE id = ?5").bind(status, providerId, recipientPhone, failure, id).run();
+  await updateSendDedupe(env, key, { status: failure && failure.includes("prazo") ? "uncertain" : status === "failed" ? "failed" : "done",
+    messageId: id, providerMessageId: providerId, recipientPhone,
+    errorCode: failure ? sendFailureCode(new HttpError(failure, failure.includes("prazo") ? 504 : 502)) : null });
   const message: MessageRow = { id, conversationId, direction: "outbound", type: kind, body: caption, mediaKey, fileName: safeName, duration, status, createdAt,
     editedAt: null, deletedAt: null, recipientMismatch: false,
     canEdit: false, canDelete: status === "sent" && Boolean(providerId && recipientPhone) };

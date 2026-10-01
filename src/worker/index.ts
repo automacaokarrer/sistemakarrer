@@ -1,4 +1,4 @@
-import { activateUser, authStatus, bootstrap, changePassword, login, logout, requireAdmin, requireAnyPermission, requirePermission, requireUser, resetPassword, touchPresence } from "./auth";
+import { activateUser, authStatus, bootstrap, changePassword, login, logout, recordActivity, requireAdmin, requireAnyPermission, requirePermission, requireSettings, requireUser, resetPassword, touchPresence } from "./auth";
 export { ChatRoom } from "./chat-room";
 import { HttpError, error, json, routeMatch } from "./http";
 import {
@@ -22,7 +22,7 @@ import {
 } from "./repository";
 import type { AppEnv } from "./types";
 import { handleZApiWebhook } from "./webhook";
-import { createUser, deleteUser, getUserAvatar, listLeadAttendants, listUsers, registerUser, sendPasswordReset, updateUserAccess } from "./settings";
+import { createUser, deleteUser, getUserAvatar, listChatAttendants, listLeadAttendants, listUsers, registerUser, sendPasswordReset, updateUserAccess } from "./settings";
 import { uploadContactDocuments } from "./drive";
 import { INBOX_ROOM, TEAM_ROOM } from "./realtime";
 import { handleLunaRequest } from "./luna";
@@ -30,6 +30,8 @@ import { listConversationTags, updateConversationTag } from "./tags";
 import { getLinkPreview } from "./link-preview";
 import { deleteMessage, editMessage } from "./message-actions";
 import { getTeamImage, listTeamMessages, markTeamRead, postTeamMessage, teamChatSummary } from "./team-chat";
+import { listActivity } from "./activity";
+import { getZApiHealth } from "./zapi";
 
 function withCookie(payload: unknown, cookie: string, status = 200): Response {
   return json(payload, { status, headers: { "Set-Cookie": cookie } });
@@ -73,6 +75,10 @@ async function routeApi(request: Request, env: AppEnv, ctx: ExecutionContext): P
     await touchPresence(request, env, user);
     return json({ ok: true });
   }
+  if (method === "POST" && pathname === "/api/auth/activity") {
+    await recordActivity(request, env, user);
+    return json({ ok: true });
+  }
   if (method === "GET" && pathname === "/api/account/avatar") return getUserAvatar(env, user.id);
   if (method === "GET" && pathname === "/api/team-chat/summary") return teamChatSummary(env, user);
   if (method === "GET" && pathname === "/api/team-chat/messages") return listTeamMessages(env, url);
@@ -90,8 +96,20 @@ async function routeApi(request: Request, env: AppEnv, ctx: ExecutionContext): P
     return json({ ok: true });
   }
   if (method === "GET" && pathname === "/api/settings/users") {
-    requireAdmin(user);
+    requireSettings(user);
     return listUsers(env);
+  }
+  if (method === "GET" && pathname === "/api/settings/activity") {
+    requireAdmin(user);
+    return listActivity(env, url);
+  }
+  if (method === "GET" && pathname === "/api/settings/zapi-health") {
+    requireAdmin(user);
+    return getZApiHealth(env);
+  }
+  if (method === "GET" && pathname === "/api/chat/attendants") {
+    requirePermission(user, "chat");
+    return listChatAttendants(env);
   }
   if (method === "POST" && pathname === "/api/settings/users") {
     requireAdmin(user);
@@ -183,7 +201,7 @@ async function routeApi(request: Request, env: AppEnv, ctx: ExecutionContext): P
 
   const conversationAssignee = routeMatch(pathname, /^\/api\/conversations\/([^/]+)\/assignee$/);
   if (conversationAssignee && method === "PATCH") {
-    requireAdmin(user);
+    requirePermission(user, "chat");
     return updateConversationAssignee(request, env, user, conversationAssignee[1]);
   }
 

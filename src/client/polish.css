@@ -156,10 +156,10 @@ input:focus, select:focus, textarea:focus { border-color: #9b805e !important; bo
 .online-team-list small, .online-team-list > p { color: #837a70; font-size: 11px; }
 
 .users-card { overflow-x: auto; padding: 0; }
-.users-card-head { min-width: 880px; padding: 24px 26px 18px; }
+.users-card-head { min-width: 1040px; padding: 24px 26px 18px; }
 .users-card-head h2 { margin: 0 0 6px; font: 500 22px "Montserrat", sans-serif; }
 .users-card-head p { margin: 0; color: #7a7269; }
-.users-table { display: grid; grid-template-columns: minmax(270px, 1.7fr) 130px repeat(3, 76px) 92px; min-width: 900px; align-items: center; gap: 9px; padding: 15px 26px; border-top: 1px solid #eee8df; }
+.users-table { display: grid; grid-template-columns: minmax(270px, 1.7fr) 130px 140px repeat(3, 76px) 92px; min-width: 1040px; align-items: center; gap: 9px; padding: 15px 26px; border-top: 1px solid #eee8df; }
 .users-table-head { padding-block: 10px; background: #faf8f4; color: #8a8177; font-size: 11px; font-weight: 700; letter-spacing: .065em; text-transform: uppercase; }
 .managed-person { display: flex; align-items: center; gap: 11px; min-width: 0; padding: 0; border: 0; background: transparent; color: inherit; font: inherit; text-align: left; cursor: pointer; }
 .managed-person:hover strong { color: #846746; text-decoration: underline; text-underline-offset: 3px; }
@@ -169,6 +169,9 @@ input:focus, select:focus, textarea:focus { border-color: #9b805e !important; bo
 .managed-person em { padding: 2px 7px; border-radius: 20px; background: #eee7dc; color: #765f43; font-size: 9px; font-style: normal; letter-spacing: .05em; text-transform: uppercase; }
 .managed-person em.pending-verification { background: #fff0d6; color: #8a5b13; }
 .presence-control { display: flex; align-items: center; gap: 10px; }
+.role-control select { width: 100%; min-height: 34px; padding: 0 8px; border: 1px solid #d8cfc3; border-radius: 8px; background: #fff; color: #4b443d; font-size: 11px; }
+.role-control select:disabled { opacity: .65; cursor: not-allowed; }
+.role-pill { display: inline-flex; align-items: center; min-height: 28px; padding: 0 8px; border-radius: 999px; background: #2f2b27; color: #ead9c3; font-size: 10px; font-weight: 700; }
 .presence-badge { display: inline-flex; align-items: center; gap: 5px; color: #8c857d; font-size: 10px; }
 .presence-badge i { width: 7px; height: 7px; border-radius: 50%; background: #b9b3ac; }
 .presence-badge.online { color: #3e7c4a; font-weight: 600; }
@@ -554,6 +557,65 @@ input:focus, select:focus, textarea:focus { border-color: #9b805e !important; bo
 .clients-page .pending-box span { margin-top: 2px; color: #6d6458; }
 
 .leads-page select:focus-visible, .leads-page button:focus-visible, .clients-page button:focus-visible { outline: 3px solid rgb(233 171 45 / 35%); outline-offset: 2px; }
+
+.activity-page { background: radial-gradient(circle at 88% 2%, rgb(204 183 153 / 12%), transparent 26%); }
+.activity-filters { display: flex; align-items: end; gap: 8px; margin-left: auto; }
+.activity-filters label { display: grid; gap: 4px; color: var(--muted); font-size: 10px; }
+.activity-filters input, .activity-filters select { min-height: 38px; padding: 0 9px; border: 1px solid var(--line); border-radius: 8px; background: #fff; color: var(--graphite); font-size: 11px; }
+.activity-kpis { margin-bottom: 16px; }
+.activity-data-note { display: flex; align-items: flex-start; gap: 9px; margin: 0 0 16px; padding: 11px 14px; border: 1px solid rgb(181 145 92 / 22%); border-radius: 10px; background: rgb(255 250 239 / 78%); color: #6d5b45; font-size: 11px; line-height: 1.45; }
+.activity-data-note svg { flex: 0 0 auto; color: #967043; }
+.activity-data-note strong { color: #4f3e2c; }
+.activity-card { overflow-x: auto; margin-top: 16px; }
+.activity-card-head { display: flex; align-items: end; justify-content: space-between; gap: 20px; padding: 20px 24px 16px; }
+.activity-card-head h2 { margin-top: 4px; font: 500 21px "Montserrat", sans-serif; }
+.activity-card-head small { color: var(--muted); font-size: 11px; }
+.activity-table { display: grid; grid-template-columns: minmax(170px, 1.5fr) 150px 70px repeat(6, 78px) 95px; min-width: 1020px; align-items: center; gap: 9px; padding: 12px 24px; font-size: 11px; }
+.activity-summary-head { background: #faf8f4; color: #8a8177; font-size: 10px; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; }
+.activity-summary-row { border-top: 1px solid #eee8df; }
+.activity-daily-head, .activity-daily-row { grid-template-columns: 185px minmax(190px, 1.35fr) 175px 190px 125px 145px; min-width: 1010px; }
+.activity-daily-row { border-top: 1px solid #eee8df; }
+.activity-daily-row time, .activity-daily-row > span { color: #665f57; }
+.activity-live-value { color: var(--online) !important; font-weight: 700; }
+.activity-user { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.activity-user strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.activity-dot { width: 8px; height: 8px; flex: 0 0 8px; border-radius: 50%; background: #b9b3aa; }
+.activity-dot.online { background: var(--online); box-shadow: 0 0 0 3px rgb(62 124 74 / 13%); }
+.activity-summary-row > span { color: #665f57; }
+.activity-summary-row > strong { font-weight: 600; }
+.activity-empty-value { color: #b2aaa0 !important; }
+.activity-session-list { padding: 0 24px 12px; }
+.activity-day-heading { padding: 16px 0 8px; color: #8a8177; font-size: 10px; font-weight: 700; letter-spacing: .07em; text-transform: capitalize; }
+.activity-session { border-top: 1px solid #eee8df; }
+.activity-session summary { display: grid; grid-template-columns: 10px minmax(120px, 1fr) 170px 120px; align-items: center; gap: 9px; min-height: 48px; cursor: pointer; list-style: none; font-size: 12px; }
+.activity-session summary::-webkit-details-marker { display: none; }
+.activity-session summary time, .activity-session summary em { color: var(--muted); font-size: 11px; font-style: normal; }
+.activity-session-details { display: grid; gap: 9px; margin: 0 0 12px 19px; padding: 11px 13px; border-radius: 9px; background: #faf8f4; color: var(--muted); font-size: 11px; }
+.activity-page-chip { display: inline-flex; margin: 4px 5px 0 0; padding: 5px 8px; border-radius: 13px; background: #e7e0d5; color: #5d5144; }
+.activity-history-badge { width: fit-content; padding: 5px 8px; border-radius: 13px; background: #eee9e1; color: #84786b; }
+.activity-pagination { display: flex; align-items: center; justify-content: center; gap: 14px; padding: 14px 24px 20px; border-top: 1px solid #eee8df; color: var(--muted); font-size: 11px; }
+.activity-pagination button { min-height: 32px; padding: 5px 12px; font-size: 11px; }
+.activity-pagination button:disabled { cursor: not-allowed; opacity: .45; }
+
+@media (max-width: 1100px) {
+  .activity-table { overflow-x: auto; }
+  .activity-filters { flex-wrap: wrap; }
+}
+
+@media (max-width: 767px) {
+  .activity-page .page-heading { display: grid; }
+  .activity-filters { width: 100%; margin-left: 0; }
+  .activity-filters label { flex: 1; }
+  .activity-filters button { flex: 1; }
+  .activity-kpis { grid-template-columns: repeat(2, 1fr); }
+  .activity-card-head { align-items: start; flex-direction: column; gap: 5px; padding: 17px 16px 13px; }
+  .activity-table { padding-inline: 16px; }
+  .activity-session-list { padding-inline: 16px; }
+  .activity-session summary { grid-template-columns: 10px minmax(100px, 1fr); gap: 7px; padding: 8px 0; }
+  .activity-session summary time, .activity-session summary em { grid-column: 2; }
+  .activity-pagination { align-items: stretch; flex-direction: column; gap: 7px; text-align: center; }
+  .activity-pagination button { width: 100%; }
+}
 
 @media (max-width: 1100px) {
   .clients-page { padding: 24px; }

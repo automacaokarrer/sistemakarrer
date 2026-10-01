@@ -3,6 +3,7 @@ import { type ClipboardEvent, type FormEvent, useCallback, useEffect, useRef, us
 import { createPortal } from "react-dom";
 import { api, formatTime, initials } from "./api";
 import type { User } from "./types";
+import { playNotificationSound } from "./notification-sound";
 import "./team-chat.css";
 
 interface Member { id: string; name: string; online: boolean }
@@ -94,6 +95,7 @@ export function TeamChat({ user, open, onClose, onCounts }: {
         try {
           const data = JSON.parse(event.data) as { type?: string; message?: TeamMessage };
           if (data.type !== "team.message" || !data.message) return;
+          if (data.message.authorId !== user.id) playNotificationSound();
           if (openRef.current) {
             setMessages((current) => current.some((item) => item.id === data.message!.id) ? current : [...current, data.message!]);
             void markRead(data.message.id).catch(() => undefined);

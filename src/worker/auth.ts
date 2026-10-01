@@ -55,7 +55,7 @@ function sessionUser(row: UserRow): SessionUser {
       chat: elevated || Boolean(row.canChat),
       leads: elevated || Boolean(row.canLeads),
       clients: elevated || Boolean(row.canClients),
-      settings: elevated || Boolean(row.canSettings),
+      settings: elevated,
     },
   };
 }
@@ -67,7 +67,7 @@ export async function passwordRecord(passwordValue: unknown): Promise<{ hash: st
   return { hash: await passwordHash(password, saltBytes), salt: bytesToBase64(saltBytes), iterations: ITERATIONS };
 }
 
-function cookieValue(request: Request, name: string): string | null {
+export function cookieValue(request: Request, name: string): string | null {
   const cookies = request.headers.get("cookie") ?? "";
   for (const part of cookies.split(";")) {
     const index = part.indexOf("=");
@@ -107,12 +107,22 @@ export function requireAdmin(user: SessionUser): void {
   if (user.role !== "admin") throw new HttpError("Acesso exclusivo do administrador.", 403);
 }
 
+export function requireSettings(user: SessionUser): void {
+  if (user.role !== "admin") throw new HttpError("Acesso exclusivo do administrador mestre.", 403);
+}
+
 async function createSession(userId: string, env: AppEnv): Promise<{ cookie: string }> {
   const token = bytesToBase64(crypto.getRandomValues(new Uint8Array(32)));
   const tokenHash = await digest(token);
+  const sessionId = crypto.randomUUID();
+  const startedAt = new Date().toISOString();
   const expires = new Date(Date.now() + 12 * 60 * 60 * 1000).toISOString();
-  await env.DB.prepare("INSERT INTO sessions (id, user_id, token_hash, expires_at) VALUES (?1, ?2, ?3, ?4)")
-    .bind(crypto.randomUUID(), userId, tokenHash, expires).run();
+  await env.DB.batch([
+    env.DB.prepare("INSERT INTO sessions (id, user_id, token_hash, expires_at, last_seen_at) VALUES (?1, ?2, ?3, ?4, ?5)")
+      .bind(sessionId, userId, tokenHash, expires, startedAt),
+    env.DB.prepare("INSERT INTO user_login_sessions (id, user_id, started_at, last_seen_at) VALUES (?1, ?2, ?3, ?4)")
+      .bind(sessionId, userId, startedAt, startedAt),
+  ]);
   return { cookie: `${SESSION_COOKIE}=${encodeURIComponent(token)}; Path=/; HttpOnly; Secure; SameSite=Strict; Max-Age=43200` };
 }
 
@@ -162,7 +172,18 @@ export async function login(request: Request, env: AppEnv): Promise<{ user: Sess
 
 export async function logout(request: Request, env: AppEnv): Promise<string> {
   const token = cookieValue(request, SESSION_COOKIE);
-  if (token) await env.DB.prepare("DELETE FROM sessions WHERE token_hash = ?1").bind(await digest(token)).run();
+  if (token) {
+    const tokenHash = await digest(token);
+    const session = await env.DB.prepare("SELECT id FROM sessions WHERE token_hash = ?1").bind(tokenHash).first<{ id: string }>();
+    const now = new Date().toISOString();
+    if (session) {
+      await env.DB.batch([
+        env.DB.prepare("UPDATE user_page_visits SET ended_at = ?1, last_seen_at = ?1 WHERE session_id = ?2 AND ended_at IS NULL").bind(now, session.id),
+        env.DB.prepare("UPDATE user_login_sessions SET ended_at = ?1, last_seen_at = ?1 WHERE id = ?2").bind(now, session.id),
+        env.DB.prepare("DELETE FROM sessions WHERE token_hash = ?1").bind(tokenHash),
+      ]);
+    }
+  }
   return `${SESSION_COOKIE}=; Path=/; HttpOnly; Secure; SameSite=Strict; Max-Age=0`;
 }
 
@@ -238,4 +259,33 @@ export async function touchPresence(request: Request, env: AppEnv, user: Session
   if (!token) return;
   await env.DB.prepare("UPDATE sessions SET last_seen_at = ?1 WHERE user_id = ?2 AND token_hash = ?3")
     .bind(new Date().toISOString(), user.id, await digest(token)).run();
+}
+
+const activityPageValues = new Set(["chat", "leads", "lead", "clients", "settings", "activity"]);
+
+export async function recordActivity(request: Request, env: AppEnv, user: SessionUser): Promise<void> {
+  const input = await readJson<{ page?: unknown }>(request);
+  const page = cleanText(input.page, 32, true);
+  if (!page || !activityPageValues.has(page)) throw new HttpError("Página de atividade inválida.", 422);
+  const token = cookieValue(request, SESSION_COOKIE);
+  if (!token) return;
+  const tokenHash = await digest(token);
+  const session = await env.DB.prepare("SELECT id FROM sessions WHERE user_id = ?1 AND token_hash = ?2 AND expires_at > ?3")
+    .bind(user.id, tokenHash, new Date().toISOString()).first<{ id: string }>();
+  if (!session) return;
+  const now = new Date().toISOString();
+  const openVisit = await env.DB.prepare("SELECT id, page_key AS pageKey FROM user_page_visits WHERE session_id = ?1 AND ended_at IS NULL ORDER BY started_at DESC LIMIT 1")
+    .bind(session.id).first<{ id: string; pageKey: string }>();
+  const statements = [
+    env.DB.prepare("UPDATE sessions SET last_seen_at = ?1 WHERE id = ?2").bind(now, session.id),
+    env.DB.prepare("UPDATE user_login_sessions SET last_seen_at = ?1, last_page = ?2 WHERE id = ?3").bind(now, page, session.id),
+  ];
+  if (openVisit?.pageKey === page) {
+    statements.push(env.DB.prepare("UPDATE user_page_visits SET last_seen_at = ?1 WHERE id = ?2").bind(now, openVisit.id));
+  } else {
+    if (openVisit) statements.push(env.DB.prepare("UPDATE user_page_visits SET ended_at = ?1, last_seen_at = ?1 WHERE id = ?2").bind(now, openVisit.id));
+    statements.push(env.DB.prepare("INSERT INTO user_page_visits (id, session_id, user_id, page_key, started_at, last_seen_at) VALUES (?1, ?2, ?3, ?4, ?5, ?5)")
+      .bind(crypto.randomUUID(), session.id, user.id, page, now));
+  }
+  await env.DB.batch(statements);
 }

@@ -33,10 +33,11 @@ import {
 import { ClipboardEvent, FocusEvent, FormEvent, useCallback, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { api, formatResponseDuration, formatTime, initials } from "./api";
-import type { AuthStatus, Classification, Contact, Conversation, LeadAttendant, LeadTag, LeadTagHistory, ManagedUser, Message, Permissions, ServiceStatus, User } from "./types";
+import type { ActivityDailySummary, ActivityPageKey, ActivitySession, ActivityUserSummary, AuthStatus, Classification, Contact, Conversation, LeadAttendant, LeadTag, LeadTagHistory, ManagedUser, Message, Permissions, ServiceStatus, User } from "./types";
 import { TeamChat } from "./TeamChat";
+import { playNotificationSound, primeNotificationSound } from "./notification-sound";
 
-type View = "chat" | "leads" | "clients" | "lead" | "settings";
+type View = "chat" | "leads" | "clients" | "lead" | "settings" | "activity";
 type PendingAttachment = { id: string; file: File; kind: "image" | "audio" | "document"; previewUrl: string | null; duration?: number };
 type LinkPreviewData = { url: string; title: string; description: string | null; siteName: string };
 type ConversationFilter = "all" | "mine" | "unassigned" | "unread" | "hot";
@@ -60,6 +61,12 @@ function formatBrazilianPhone(value: string): string {
   let local = national.slice(2);
   if (local.length === 8) local = `9${local}`;
   return `(${areaCode}) ${local.slice(0, 5)}-${local.slice(5)}`;
+}
+
+function conversationDisplayName(conversation: Pick<Conversation, "name" | "phone">): string {
+  const name = conversation.name?.trim();
+  if (!name || /@lid$/i.test(name) || name === conversation.phone) return formatBrazilianPhone(conversation.phone);
+  return name;
 }
 
 function App() {
@@ -199,6 +206,16 @@ function Dashboard({ user, googleDrive, onLogout }: { user: User; googleDrive: b
   const conversationsLoaded = useRef(false);
   const reloadSequence = useRef(0);
 
+  useEffect(() => {
+    const prime = () => primeNotificationSound();
+    window.addEventListener("pointerdown", prime, { passive: true });
+    window.addEventListener("keydown", prime);
+    return () => {
+      window.removeEventListener("pointerdown", prime);
+      window.removeEventListener("keydown", prime);
+    };
+  }, []);
+
   const reloadConversations = useCallback(async () => {
     const sequence = ++reloadSequence.current;
     if (!conversationsLoaded.current) setLoading(true);
@@ -267,6 +284,7 @@ function Dashboard({ user, googleDrive, onLogout }: { user: User; googleDrive: b
         if (event.data === "pong") { awaitingPong = false; return; }
         try {
           const data = JSON.parse(event.data) as { type?: string };
+          if (data.type === "message.incoming") playNotificationSound(0.085);
           if (data.type === "conversation.updated") scheduleRefresh();
         } catch { /* mensagens de controle são ignoradas */ }
       };
@@ -296,12 +314,18 @@ function Dashboard({ user, googleDrive, onLogout }: { user: User; googleDrive: b
     };
   }, [reloadConversations, user.permissions.chat, user.permissions.leads]);
   useEffect(() => {
-    const ping = () => { if (document.visibilityState === "visible") void api("/api/auth/presence", { method: "POST" }).catch(() => undefined); };
+    const ping = () => {
+      if (document.visibilityState !== "visible") return;
+      void Promise.all([
+        api("/api/auth/presence", { method: "POST" }),
+        api("/api/auth/activity", { method: "POST", body: JSON.stringify({ page: view }) }),
+      ]).catch(() => undefined);
+    };
     ping();
-    const timer = window.setInterval(ping, 5 * 60 * 1000);
+    const timer = window.setInterval(ping, 60 * 1000);
     document.addEventListener("visibilitychange", ping);
     return () => { window.clearInterval(timer); document.removeEventListener("visibilitychange", ping); };
-  }, []);
+  }, [view]);
   useEffect(() => {
     if (view === "clients") void loadContacts();
   }, [loadContacts, view]);
@@ -335,6 +359,7 @@ function Dashboard({ user, googleDrive, onLogout }: { user: User; googleDrive: b
         {view === "lead" && user.permissions.leads && <LeadDetail conversation={selected} onBack={() => setView("leads")} onChat={() => user.permissions.chat && setView("chat")} onRefresh={reloadConversations} />}
         {view === "clients" && user.permissions.clients && <ClientsPage contacts={contacts} googleDrive={googleDrive} onRefresh={refreshClients} />}
         {view === "settings" && user.role === "admin" && <SettingsPage currentUser={user} />}
+        {view === "activity" && user.role === "admin" && <ActivityPage />}
       </main>
       <TeamChat user={user} open={teamChatOpen} onClose={() => setTeamChatOpen(false)} onCounts={updateTeamCounts} />
     </div>
@@ -368,6 +393,7 @@ function Sidebar({ view, user, unread, teamUnread, teamMentions, teamChatOpen, o
             <span><strong>{user.name}</strong><small>Online <i /></small></span>
             <button className="logout-button" title="Sair" aria-label="Sair" onClick={() => void onLogout()}><LogOut size={17} /></button>
           </div>
+          {user.role === "admin" && <button className={`settings-nav ${view === "activity" ? "active" : ""}`} onClick={() => onNavigate("activity")}><span><Clock3 size={18} /></span><strong>Atividade da equipe</strong></button>}
           {user.role === "admin" && <button className={`settings-nav ${view === "settings" ? "active" : ""}`} onClick={() => onNavigate("settings")}><span><Settings size={18} /></span><strong>Configurações</strong></button>}
         </div>
       </div>
@@ -379,7 +405,7 @@ function ChatPage({ currentUser, conversations, selected, onSelect, onOpenLead, 
   const [filter, setFilter] = useState<ConversationFilter>("all");
   const [sort, setSort] = useState<ConversationSort>("recent");
   const [search, setSearch] = useState("");
-  const [attendants, setAttendants] = useState<ManagedUser[]>([]);
+  const [attendants, setAttendants] = useState<Array<{ id: string; name: string }>>([]);
   const [assigning, setAssigning] = useState(false);
   const [updatingStatus, setUpdatingStatus] = useState(false);
   const [updatingLuna, setUpdatingLuna] = useState(false);
@@ -390,9 +416,9 @@ function ChatPage({ currentUser, conversations, selected, onSelect, onOpenLead, 
     return () => window.clearInterval(timer);
   }, []);
   useEffect(() => {
-    if (currentUser.role !== "admin") return;
-    void api<{ users: ManagedUser[] }>("/api/settings/users").then((data) => setAttendants(data.users.filter((user) => user.active && user.permissions.chat))).catch(() => setAttendants([]));
-  }, [currentUser.role]);
+    if (!currentUser.permissions.chat) return;
+    void api<{ attendants: Array<{ id: string; name: string }> }>("/api/chat/attendants").then((data) => setAttendants(data.attendants)).catch(() => setAttendants([]));
+  }, [currentUser.permissions.chat]);
   async function assign(userId: string) {
     if (!selected || assigning) return;
     setAssigning(true);
@@ -461,12 +487,12 @@ function ChatPage({ currentUser, conversations, selected, onSelect, onOpenLead, 
           {filtered.length === 0 && <div className="conversation-empty"><span><MessageCircle size={19} /></span><strong>Nenhuma conversa</strong><p>{search || filter !== "all" ? "Tente alterar os filtros ou a busca." : "As novas conversas do WhatsApp aparecerão aqui."}</p></div>}
         </div>
       </div>
-      {selected ? <ConversationPanel key={selected.id} conversation={selected} attendants={attendants} canAssign={currentUser.role === "admin"} assigning={assigning} updatingStatus={updatingStatus} updatingLuna={updatingLuna} actionError={actionError} onAssign={assign} onStatus={updateStatus} onToggleLuna={toggleLuna} onBack={() => onSelect(null)} onOpenLead={onOpenLead} onRefresh={onRefresh} /> : <div className="chat-welcome"><div className="welcome-mark"><MessageCircle size={28} /></div><span className="eyebrow">Central de atendimento</span><h2>Suas conversas em um só lugar</h2><p>Selecione um contato ao lado para visualizar o histórico e continuar o atendimento.</p><div className="welcome-features"><span><CheckCheck size={16} /> Histórico organizado</span><span><Users size={16} /> Leads integrados</span><span><ShieldCheck size={16} /> Dados protegidos</span></div><small><i /> Aguardando novas mensagens</small></div>}
+      {selected ? <ConversationPanel key={selected.id} conversation={selected} attendants={attendants} canAssign={currentUser.permissions.chat} canManageLuna={currentUser.role === "admin"} assigning={assigning} updatingStatus={updatingStatus} updatingLuna={updatingLuna} actionError={actionError} onAssign={assign} onStatus={updateStatus} onToggleLuna={toggleLuna} onBack={() => onSelect(null)} onOpenLead={onOpenLead} onRefresh={onRefresh} /> : <div className="chat-welcome"><div className="welcome-mark"><MessageCircle size={28} /></div><span className="eyebrow">Central de atendimento</span><h2>Suas conversas em um só lugar</h2><p>Selecione um contato ao lado para visualizar o histórico e continuar o atendimento.</p><div className="welcome-features"><span><CheckCheck size={16} /> Histórico organizado</span><span><Users size={16} /> Leads integrados</span><span><ShieldCheck size={16} /> Dados protegidos</span></div><small><i /> Aguardando novas mensagens</small></div>}
     </section>
   );
 }
 
-function ConversationPanel({ conversation, attendants, canAssign, assigning, updatingStatus, updatingLuna, actionError, onAssign, onStatus, onToggleLuna, onBack, onOpenLead, onRefresh }: { conversation: Conversation; attendants: ManagedUser[]; canAssign: boolean; assigning: boolean; updatingStatus: boolean; updatingLuna: boolean; actionError: string; onAssign: (userId: string) => Promise<void>; onStatus: (status: ServiceStatus) => Promise<void>; onToggleLuna: () => Promise<void>; onBack: () => void; onOpenLead: () => void; onRefresh: () => Promise<void> }) {
+function ConversationPanel({ conversation, attendants, canAssign, canManageLuna, assigning, updatingStatus, updatingLuna, actionError, onAssign, onStatus, onToggleLuna, onBack, onOpenLead, onRefresh }: { conversation: Conversation; attendants: Array<{ id: string; name: string }>; canAssign: boolean; canManageLuna: boolean; assigning: boolean; updatingStatus: boolean; updatingLuna: boolean; actionError: string; onAssign: (userId: string) => Promise<void>; onStatus: (status: ServiceStatus) => Promise<void>; onToggleLuna: () => Promise<void>; onBack: () => void; onOpenLead: () => void; onRefresh: () => Promise<void> }) {
   const [messages, setMessages] = useState<Message[]>([]);
   const [text, setText] = useState("");
   const [loading, setLoading] = useState(false);
@@ -489,6 +515,7 @@ function ConversationPanel({ conversation, attendants, canAssign, assigning, upd
   const imageInputRef = useRef<HTMLInputElement>(null);
   const documentInputRef = useRef<HTMLInputElement>(null);
   const pendingAttachmentsRef = useRef<PendingAttachment[]>([]);
+  const textDedupeKeyRef = useRef<{ key: string; body: string } | null>(null);
   const recorderRef = useRef<MediaRecorder | null>(null);
   const recorderStreamRef = useRef<MediaStream | null>(null);
   const recordingStartedAtRef = useRef(0);
@@ -666,10 +693,16 @@ function ConversationPanel({ conversation, attendants, canAssign, assigning, upd
     if (!body || sending) return;
     setSending(true);
     setSendError("");
+    const dedupeKey = textDedupeKeyRef.current?.body === body
+      ? textDedupeKeyRef.current.key
+      : (textDedupeKeyRef.current = { key: crypto.randomUUID(), body }).key;
     try {
-      const result = await api<{ message: Message }>(`/api/conversations/${conversation.id}/messages`, { method: "POST", body: JSON.stringify({ body }) });
-      setMessages((current) => current.some((item) => item.id === result.message.id) ? current : [...current, result.message]);
+      const result = await api<{ message: Message }>(`/api/conversations/${conversation.id}/messages`, { method: "POST", body: JSON.stringify({ body, dedupeKey }) });
+      setMessages((current) => current.some((item) => item.id === result.message.id)
+        ? current.map((item) => item.id === result.message.id ? result.message : item)
+        : [...current, result.message]);
       setText("");
+      textDedupeKeyRef.current = null;
       await onRefresh();
       requestAnimationFrame(() => endRef.current?.scrollIntoView({ behavior: "smooth" }));
     } catch (reason) {
@@ -692,10 +725,13 @@ function ConversationPanel({ conversation, attendants, canAssign, assigning, upd
         const form = new FormData();
         form.set("file", attachment.file);
         form.set("kind", attachment.kind);
+        form.set("dedupeKey", attachment.id);
         if (caption && !captionSent && attachment.kind !== "audio") form.set("caption", caption);
         if (attachment.duration) form.set("duration", String(attachment.duration));
         const result = await api<{ message: Message }>(`/api/conversations/${conversation.id}/media`, { method: "POST", body: form });
-        setMessages((current) => current.some((item) => item.id === result.message.id) ? current : [...current, result.message]);
+        setMessages((current) => current.some((item) => item.id === result.message.id)
+          ? current.map((item) => item.id === result.message.id ? result.message : item)
+          : [...current, result.message]);
         if (caption && !captionSent && attachment.kind !== "audio") captionSent = true;
         sent += 1;
         if (attachment.previewUrl) URL.revokeObjectURL(attachment.previewUrl);
@@ -786,22 +822,24 @@ function ConversationPanel({ conversation, attendants, canAssign, assigning, upd
     pendingAttachmentsRef.current.forEach((item) => { if (item.previewUrl) URL.revokeObjectURL(item.previewUrl); });
   }, []);
   useEffect(() => {
+    textDedupeKeyRef.current = null;
     setPendingAttachments((current) => {
       current.forEach((item) => { if (item.previewUrl) URL.revokeObjectURL(item.previewUrl); });
       return [];
     });
   }, [conversation.id]);
+  const displayName = conversationDisplayName(conversation);
 
   return (
     <div className={`conversation-panel ${tagModal ? "modal-open" : ""}`}>
       <header className="chat-header">
         <button className="mobile-back" aria-label="Voltar às conversas" onClick={onBack}><ArrowLeft size={20} /></button>
-        <Avatar name={conversation.name} imageUrl={conversation.avatarUrl} online={conversation.online} />
-        <div className="chat-contact"><div className="chat-contact-title"><h2>{conversation.name}</h2><button type="button" className="tag-button" aria-label="Gerenciar etiquetas" title="Gerenciar etiquetas" onClick={() => setTagModal(true)}><Tag size={15} /></button></div><p>{conversation.online ? <em>Online</em> : conversation.lastSeenAt ? `Visto por último ${new Date(conversation.lastSeenAt).toLocaleString("pt-BR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" })}` : "Visto por último indisponível"} <ClassificationBadge value={conversation.classification} /></p>{tagData.tags.some((tag) => tag.selected) && <div className="chat-tag-strip" aria-label="Etiquetas ativas">{tagData.tags.filter((tag) => tag.selected).slice(0, 3).map((tag) => <span className="chat-tag" style={{ backgroundColor: tag.color }} key={tag.id}>{tag.name}</span>)}{tagData.tags.filter((tag) => tag.selected).length > 3 && <span className="chat-tag-more">+{tagData.tags.filter((tag) => tag.selected).length - 3}</span>}</div>}</div>
-        <div className={`chat-routing-controls ${canAssign ? "with-luna" : "solo"}`}>
+        <Avatar name={displayName} imageUrl={conversation.avatarUrl} online={conversation.online} />
+        <div className="chat-contact"><div className="chat-contact-title"><h2>{displayName}</h2><button type="button" className="tag-button" aria-label="Gerenciar etiquetas" title="Gerenciar etiquetas" onClick={() => setTagModal(true)}><Tag size={15} /></button></div><p>{conversation.online ? <em>Online</em> : conversation.lastSeenAt ? `Visto por último ${new Date(conversation.lastSeenAt).toLocaleString("pt-BR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" })}` : "Visto por último indisponível"} <ClassificationBadge value={conversation.classification} /></p>{tagData.tags.some((tag) => tag.selected) && <div className="chat-tag-strip" aria-label="Etiquetas ativas">{tagData.tags.filter((tag) => tag.selected).slice(0, 3).map((tag) => <span className="chat-tag" style={{ backgroundColor: tag.color }} key={tag.id}>{tag.name}</span>)}{tagData.tags.filter((tag) => tag.selected).length > 3 && <span className="chat-tag-more">+{tagData.tags.filter((tag) => tag.selected).length - 3}</span>}</div>}</div>
+        <div className={`chat-routing-controls ${canManageLuna ? "with-luna" : "solo"}`}>
           <CompactSelect className={`service-status-picker ${conversation.serviceStatus}`} label="Status do atendimento" value={conversation.serviceStatus} disabled={updatingStatus} options={Object.entries(serviceStatusLabel).map(([value, label]) => ({ value, label }))} onChange={(value) => void onStatus(value as ServiceStatus)} />
           {canAssign && <CompactSelect className="assignee-picker" label="Direcionar atendimento" value={conversation.assigneeId ?? ""} disabled={assigning} icon={<Users size={15} />} options={[{ value: "", label: "Não atribuído" }, ...attendants.map((attendant) => ({ value: attendant.id, label: attendant.name }))]} onChange={(value) => void onAssign(value)} />}
-          {canAssign && <button type="button" className={`luna-control ${conversation.lunaAutonomousEnabled ? "active" : ""}`} aria-pressed={conversation.lunaAutonomousEnabled} aria-label={conversation.lunaAutonomousEnabled ? "Desativar atendimento da Luna" : "Ativar atendimento da Luna"} disabled={updatingLuna || (!conversation.lunaAutonomousEnabled && conversation.serviceStatus === "resolved")} onClick={() => void onToggleLuna()}><Bot size={16} /><span>{updatingLuna ? "Aguarde" : conversation.lunaAutonomousEnabled ? "Luna ativa" : "Ativar Luna"}</span></button>}
+          {canManageLuna && <button type="button" className={`luna-control ${conversation.lunaAutonomousEnabled ? "active" : ""}`} aria-pressed={conversation.lunaAutonomousEnabled} aria-label={conversation.lunaAutonomousEnabled ? "Desativar atendimento da Luna" : "Ativar atendimento da Luna"} disabled={updatingLuna || (!conversation.lunaAutonomousEnabled && conversation.serviceStatus === "resolved")} onClick={() => void onToggleLuna()}><Bot size={16} /><span>{updatingLuna ? "Aguarde" : conversation.lunaAutonomousEnabled ? "Luna ativa" : "Ativar Luna"}</span></button>}
         </div>
         <button className="primary" onClick={onOpenLead}>Ver ficha do lead</button>
         {actionError && <div className="chat-action-error" role="alert">{actionError}</div>}
@@ -815,7 +853,7 @@ function ConversationPanel({ conversation, attendants, canAssign, assigning, upd
         {!loading && messages.length === 0 && <Empty text="Ainda não há mensagens nesta conversa." dark />}
         <div ref={endRef} />
       </div>
-      <div className="composer-recipient" aria-label="Destinatário do envio"><span>Enviar para</span><strong>{conversation.name}</strong><span>{formatBrazilianPhone(conversation.phone)}</span></div>
+      <div className="composer-recipient" aria-label="Destinatário do envio"><span>Enviar para</span><strong>{displayName}</strong><span>{formatBrazilianPhone(conversation.phone)}</span></div>
       {pendingAttachments.length > 0 && <div className="attachment-preview" role="region" aria-label="Prévia dos arquivos">
         <div className="attachment-preview-list">
           {pendingAttachments.map((attachment) => <div className={`attachment-preview-item ${attachment.kind}`} key={attachment.id}>
@@ -1131,12 +1169,13 @@ function LeadDetail({ conversation, onBack, onChat, onRefresh }: { conversation:
   useEffect(() => { if (conversation) void api<{ messages: Message[] }>(`/api/conversations/${conversation.id}/messages?limit=100`).then((data) => setMessages(data.messages)); }, [conversation]);
   if (!conversation) return <Empty text="Selecione um lead." large />;
   const current = conversation;
+  const displayName = conversationDisplayName(conversation);
   async function classify(value: Classification) { await api(`/api/leads/${current.id}/classification`, { method: "PATCH", body: JSON.stringify({ classification: value }) }); await onRefresh(); }
   async function saveNote() { if (!note.trim()) return; await api(`/api/conversations/${current.id}/notes`, { method: "POST", body: JSON.stringify({ body: note.trim() }) }); setNote(""); }
   return (
     <section className="page detail-page">
-      <header className="lead-hero"><button onClick={onBack}><ArrowLeft size={17} /> Leads</button><Avatar name={conversation.name} /><div><h1>{conversation.name}</h1><p>{formatBrazilianPhone(conversation.phone)} · <em>{conversation.online ? "Online" : "Offline"}</em> · Origem: WhatsApp</p></div><button className="primary" onClick={onChat}>Abrir chat</button><button className="outline">Editar cadastro</button></header>
-      <div className="detail-grid"><div className="card history-card"><div className="tabs"><button className="active">Histórico da conversa</button><button>Mídias e documentos</button><button>Anotações</button><button>Linha do tempo</button></div><div className="history-list">{messages.map((message) => <div key={message.id}><time>{new Date(message.createdAt).toLocaleString("pt-BR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" })}</time><p><strong>{message.direction === "inbound" ? conversation.name.split(" ")[0] : "Karrer"}</strong> — {message.deletedAt ? "Mensagem apagada" : message.type === "text" ? message.body : `${message.type === "audio" ? "Áudio" : message.type === "image" ? "Imagem" : "Documento"}${message.body ? ` · ${message.body}` : ""}`}{message.editedAt && !message.deletedAt ? " (editada)" : ""}</p></div>)}</div><footer>Histórico somente leitura · para responder, abra o chat.</footer></div>
+      <header className="lead-hero"><button onClick={onBack}><ArrowLeft size={17} /> Leads</button><Avatar name={displayName} /><div><h1>{displayName}</h1><p>{formatBrazilianPhone(conversation.phone)} · <em>{conversation.online ? "Online" : "Offline"}</em> · Origem: WhatsApp</p></div><button className="primary" onClick={onChat}>Abrir chat</button><button className="outline">Editar cadastro</button></header>
+      <div className="detail-grid"><div className="card history-card"><div className="tabs"><button className="active">Histórico da conversa</button><button>Mídias e documentos</button><button>Anotações</button><button>Linha do tempo</button></div><div className="history-list">{messages.map((message) => <div key={message.id}><time>{new Date(message.createdAt).toLocaleString("pt-BR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" })}</time><p><strong>{message.direction === "inbound" ? displayName.split(" ")[0] : "Karrer"}</strong> — {message.deletedAt ? "Mensagem apagada" : message.type === "text" ? message.body : `${message.type === "audio" ? "Áudio" : message.type === "image" ? "Imagem" : "Documento"}${message.body ? ` · ${message.body}` : ""}`}{message.editedAt && !message.deletedAt ? " (editada)" : ""}</p></div>)}</div><footer>Histórico somente leitura · para responder, abra o chat.</footer></div>
         <aside className="detail-aside"><div className="classification-card"><span className="eyebrow">Classificação</span><div className="segmented">{(["hot", "warm", "cold"] as Classification[]).map((value) => <button key={value} className={conversation.classification === value ? value : ""} onClick={() => void classify(value)}>{classificationLabel[value]}</button>)}</div><p><span>Pontuação</span><strong>{conversation.score} / 100</strong></p><progress max="100" value={conversation.score} /><ul><li>Respondeu em menos de 5 min</li><li>Enviou documentação</li><li>Interações recentes</li><li className="pending">Contrato de honorários pendente</li></ul></div><div className="card data-card"><span className="eyebrow">Dados do cliente</span><dl><dt>Telefone</dt><dd>{formatBrazilianPhone(conversation.phone)}</dd><dt>Banco</dt><dd>{conversation.bank ?? "Não informado"}</dd><dt>Etapa</dt><dd><strong>{conversation.stage}</strong></dd><dt>Responsável</dt><dd>{conversation.assigneeName ?? "Não atribuído"}</dd></dl></div><div className="card notes-card"><span className="eyebrow">Anotações internas</span><textarea value={note} onChange={(event) => setNote(event.target.value)} placeholder="Adicionar nota..." /><button className="primary" onClick={() => void saveNote()}>Salvar nota</button></div></aside></div>
     </section>
   );
@@ -1215,7 +1254,106 @@ const accessLabels: Array<{ key: keyof Permissions; label: string }> = [
   { key: "chat", label: "Chat" }, { key: "leads", label: "Leads" }, { key: "clients", label: "Clientes" },
 ];
 
+const activityPageColumns: Array<{ key: ActivityPageKey; label: string }> = [
+  { key: "chat", label: "Chat" }, { key: "leads", label: "Leads" }, { key: "lead", label: "Ficha" },
+  { key: "clients", label: "Clientes" }, { key: "settings", label: "Config." }, { key: "activity", label: "Atividade" },
+];
+
+function formatActivityDuration(seconds: number): string {
+  const safe = Math.max(0, Math.round(seconds));
+  if (safe < 60) return `${safe}s`;
+  const minutes = Math.floor(safe / 60);
+  if (minutes < 60) return `${minutes}min`;
+  return `${Math.floor(minutes / 60)}h ${minutes % 60}min`;
+}
+
+function formatActivityDurationExact(seconds: number): string {
+  const safe = Math.max(0, Math.round(seconds));
+  const hours = Math.floor(safe / 3_600);
+  const minutes = Math.floor((safe % 3_600) / 60);
+  const remainder = safe % 60;
+  if (hours) return `${hours}h ${minutes}min ${remainder}s`;
+  if (minutes) return `${minutes}min ${remainder}s`;
+  return `${remainder}s`;
+}
+
+function formatActivityDate(value: string | null, exact = false): string {
+  if (!value) return "—";
+  return new Date(value).toLocaleString("pt-BR", { timeZone: "America/Manaus", dateStyle: "short", timeStyle: exact ? "medium" : "short" });
+}
+
+function activityLocalDay(value: string): string {
+  return new Date(`${value}T12:00:00-04:00`).toLocaleDateString("pt-BR", { timeZone: "America/Manaus", weekday: "long", day: "2-digit", month: "long", year: "numeric" });
+}
+
+function ActivityPage() {
+  const today = new Date();
+  const defaultTo = today.toLocaleDateString("en-CA", { timeZone: "America/Manaus" });
+  const defaultFrom = new Date(new Date(`${defaultTo}T00:00:00-04:00`).getTime() - 29 * 24 * 60 * 60 * 1_000).toLocaleDateString("en-CA", { timeZone: "America/Manaus" });
+  const [fromDate, setFromDate] = useState(defaultFrom);
+  const [toDate, setToDate] = useState(defaultTo);
+  const [selectedUserId, setSelectedUserId] = useState("");
+  const [sessionPage, setSessionPage] = useState(1);
+  const [dailyPage, setDailyPage] = useState(1);
+  const [users, setUsers] = useState<ActivityUserSummary[]>([]);
+  const [sessions, setSessions] = useState<ActivitySession[]>([]);
+  const [daily, setDaily] = useState<ActivityDailySummary[]>([]);
+  const [busy, setBusy] = useState(true);
+  const [error, setError] = useState("");
+
+  const load = useCallback(async () => {
+    setBusy(true); setError("");
+    try {
+      const params = new URLSearchParams({ from: fromDate, to: toDate });
+      const data = await api<{ users: ActivityUserSummary[]; sessions: ActivitySession[]; daily: ActivityDailySummary[] }>(`/api/settings/activity?${params}`);
+      setUsers(data.users); setSessions(data.sessions); setDaily(data.daily);
+    } catch (reason) { setError(reason instanceof Error ? reason.message : "Não foi possível carregar a atividade."); }
+    finally { setBusy(false); }
+  }, [fromDate, toDate]);
+
+  useEffect(() => { void load(); }, [load]);
+  useEffect(() => { setSessionPage(1); setDailyPage(1); }, [selectedUserId, fromDate, toDate]);
+  const visibleUsers = selectedUserId ? users.filter((user) => user.id === selectedUserId) : users;
+  const visibleSessions = selectedUserId ? sessions.filter((session) => session.userId === selectedUserId) : sessions;
+  const visibleDaily = selectedUserId ? daily.filter((row) => row.userId === selectedUserId) : daily;
+  const dailyPerPage = 15;
+  const totalDailyPages = Math.max(1, Math.ceil(visibleDaily.length / dailyPerPage));
+  const currentDailyPage = Math.min(dailyPage, totalDailyPages);
+  const pagedDaily = visibleDaily.slice((currentDailyPage - 1) * dailyPerPage, currentDailyPage * dailyPerPage);
+  const sessionsPerPage = 10;
+  const totalSessionPages = Math.max(1, Math.ceil(visibleSessions.length / sessionsPerPage));
+  const currentSessionPage = Math.min(sessionPage, totalSessionPages);
+  const pagedSessions = visibleSessions.slice((currentSessionPage - 1) * sessionsPerPage, currentSessionPage * sessionsPerPage);
+  const totalSeconds = visibleUsers.reduce((sum, user) => sum + user.totalSeconds, 0);
+  const activeUsers = visibleUsers.filter((user) => user.online).length;
+  const sessionGroups = pagedSessions.reduce<Array<{ key: string; label: string; items: ActivitySession[] }>>((groups, session) => {
+    const date = new Date(session.startedAt);
+    const key = date.toLocaleDateString("en-CA", { timeZone: "America/Manaus" });
+    const current = groups[groups.length - 1];
+    if (current?.key === key) current.items.push(session);
+    else groups.push({ key, label: activityLocalDay(key), items: [session] });
+    return groups;
+  }, []);
+  const pageSeconds = (user: ActivityUserSummary, page: ActivityPageKey) => user.pageSeconds[page] ?? 0;
+  const pageTime = (user: ActivityUserSummary, page: ActivityPageKey) => pageSeconds(user, page) > 0 ? formatActivityDuration(pageSeconds(user, page)) : "—";
+
+  return <section className="page activity-page">
+    <div className="page-heading"><div><span className="eyebrow">Administração</span><h1>Atividade da equipe</h1><p>Entradas no sistema, tempo por página e períodos em atendimento.</p></div><div className="activity-filters"><label>Usuário<select value={selectedUserId} onChange={(event) => setSelectedUserId(event.target.value)}><option value="">Todos</option>{users.map((user) => <option value={user.id} key={user.id}>{user.name}</option>)}</select></label><label>De<input type="date" value={fromDate} onChange={(event) => setFromDate(event.target.value)} /></label><label>Até<input type="date" value={toDate} onChange={(event) => setToDate(event.target.value)} /></label><button className="primary" onClick={() => void load()} disabled={busy}>{busy ? "Atualizando..." : "Atualizar"}</button></div></div>
+    {error && <div className="notice error">{error}</div>}
+    <div className="kpi-grid activity-kpis"><Kpi label="Usuários no período" value={visibleUsers.length} detail="Com registro de acesso" /><Kpi label="Online agora" value={activeUsers} detail="Atividade nos últimos 6 min" /><Kpi label="Entradas" value={visibleSessions.length} detail="Sessões localizadas" /><Kpi label="Tempo de login" value={formatActivityDuration(totalSeconds)} detail="Soma das sessões" /></div>
+    <div className="activity-data-note"><Clock3 size={15} /><span><strong>Como ler:</strong> sessões anteriores ao rastreamento exibem entrada e duração de login, mas não têm página registrada. O tempo por página começa a ser medido a partir do primeiro heartbeat.</span></div>
+    <div className="card activity-card"><header className="activity-card-head"><div><span className="eyebrow">Resumo por usuário</span><h2>Tempo de login e páginas</h2></div><small>O tempo aberto termina no último heartbeat recebido.</small></header><div className="activity-table activity-summary-head"><span>Usuário</span><span>Última entrada no sistema</span><span>Entradas</span>{activityPageColumns.map((page) => <span key={page.key}>{page.label}</span>)}<span>Total logado no período</span></div>{visibleUsers.map((user) => <div className="activity-table activity-summary-row" key={user.id}><div className="activity-user"><span className={`activity-dot ${user.online ? "online" : ""}`} /><strong>{user.name}</strong></div><span>{formatActivityDate(user.lastLoginAt, true)}</span><span>{user.loginCount}</span>{activityPageColumns.map((page) => <span className={pageTime(user, page.key) === "—" ? "activity-empty-value" : ""} key={page.key}>{pageTime(user, page.key)}</span>)}<strong>{formatActivityDuration(user.totalSeconds)}</strong></div>)}{!busy && !visibleUsers.length && <Empty text="Nenhuma entrada registrada neste período." />}</div>
+    <div className="card activity-card"><header className="activity-card-head"><div><span className="eyebrow">Detalhamento diário</span><h2>Cada sessão, por dia</h2></div><small>{visibleDaily.length} registros individuais</small></header><div className="activity-table activity-daily-head"><span>Dia</span><span>Usuário</span><span>Entrada</span><span>Saída / último heartbeat</span><span>Tempo da sessão</span><span>Status</span></div>{pagedDaily.map((row) => <div className="activity-table activity-daily-row" key={`${row.sessionId}-${row.day}`}><span>{activityLocalDay(row.day)}</span><strong>{row.userName}</strong><time>{formatActivityDate(row.startedAt, true)}</time><time>{formatActivityDate(row.endedAt, true)}</time><strong>{formatActivityDurationExact(row.seconds)}</strong><span className={row.active ? "activity-live-value" : ""}>{row.active ? "Online agora" : "Encerrada / heartbeat"}</span></div>)}{!busy && !visibleDaily.length && <Empty text="Nenhum tempo diário registrado neste período." />}<div className="activity-pagination"><button className="outline" disabled={currentDailyPage <= 1} onClick={() => setDailyPage((page) => Math.max(1, page - 1))}>Anterior</button><span>Página {currentDailyPage} de {totalDailyPages} · {visibleDaily.length ? `${(currentDailyPage - 1) * dailyPerPage + 1}–${Math.min(currentDailyPage * dailyPerPage, visibleDaily.length)} de ${visibleDaily.length}` : "0 registros"}</span><button className="outline" disabled={currentDailyPage >= totalDailyPages} onClick={() => setDailyPage((page) => Math.min(totalDailyPages, page + 1))}>Próxima</button></div></div>
+    <div className="card activity-card"><header className="activity-card-head"><div><span className="eyebrow">Histórico de entradas</span><h2>Entradas organizadas por dia</h2></div><small>{visibleSessions.length} sessões no período</small></header><div className="activity-session-list">{sessionGroups.map((group) => <div key={group.key}><div className="activity-day-heading">{group.label}</div>{group.items.map((session) => <details className="activity-session" key={session.id}><summary><span className={`activity-dot ${session.active ? "online" : ""}`} /><strong>{session.userName}</strong><time>Entrada: {formatActivityDate(session.startedAt, true)}</time><em>{session.active ? "Online agora" : formatActivityDurationExact(session.durationSeconds)}</em></summary><div className="activity-session-details"><span>Entrada exata: {formatActivityDate(session.startedAt, true)}</span><span>{session.endedAt ? "Saída registrada" : "Último heartbeat"}: {formatActivityDate(session.endedAt ?? session.lastSeenAt, true)}</span><span>Duração desta sessão: {formatActivityDurationExact(session.durationSeconds)}</span><span>Página atual: {session.lastPage ? activityPageColumns.find((page) => page.key === session.lastPage)?.label ?? session.lastPage : "—"}</span>{session.pages.length ? <div>{session.pages.map((page) => <span className="activity-page-chip" key={`${session.id}-${page.page}-${page.startedAt}`}>{page.label}: {formatActivityDurationExact(page.seconds)}</span>)}</div> : <span className="activity-history-badge">Histórico importado · sem página registrada</span>}</div></details>)}</div>)}{!busy && !visibleSessions.length && <Empty text="Nenhuma sessão registrada neste período." />}</div><div className="activity-pagination"><button className="outline" disabled={currentSessionPage <= 1} onClick={() => setSessionPage((page) => Math.max(1, page - 1))}>Anterior</button><span>Página {currentSessionPage} de {totalSessionPages} · {visibleSessions.length ? `${(currentSessionPage - 1) * sessionsPerPage + 1}–${Math.min(currentSessionPage * sessionsPerPage, visibleSessions.length)} de ${visibleSessions.length}` : "0 sessões"}</span><button className="outline" disabled={currentSessionPage >= totalSessionPages} onClick={() => setSessionPage((page) => Math.min(totalSessionPages, page + 1))}>Próxima</button></div></div>
+  </section>;
+}
+
+function accessRoleLabel(role: User["role"]): string {
+  return role === "admin" ? "Administrador mestre" : role === "manager" ? "Subadministrador" : "Usuário da equipe";
+}
+
 function SettingsPage({ currentUser }: { currentUser: User }) {
+  const canManageUsers = currentUser.role === "admin";
   const [users, setUsers] = useState<ManagedUser[]>([]);
   const [modal, setModal] = useState<SettingsModal>(null);
   const [busy, setBusy] = useState(false);
@@ -1235,13 +1373,13 @@ function SettingsPage({ currentUser }: { currentUser: User }) {
   }, [loadUsers]);
 
   function open(next: SettingsModal) { setError(""); setNotice(""); setModal(next); }
-  async function updateAccess(user: ManagedUser, patch: { active?: boolean; permission?: keyof Permissions }) {
-    if (user.role === "admin") return;
-    const next = { ...user, active: patch.active ?? user.active, permissions: { ...user.permissions } };
+  async function updateAccess(user: ManagedUser, patch: { active?: boolean; permission?: keyof Permissions; role?: "manager" | "attendant" }) {
+    if (!canManageUsers || user.role === "admin" || user.id === currentUser.id) return;
+    const next = { ...user, active: patch.active ?? user.active, role: patch.role ?? user.role, permissions: { ...user.permissions } };
     if (patch.permission) next.permissions[patch.permission] = !next.permissions[patch.permission];
     setUsers((current) => current.map((item) => item.id === user.id ? next : item));
     try {
-      await api(`/api/settings/users/${user.id}/access`, { method: "PATCH", body: JSON.stringify({ active: next.active, permissions: next.permissions }) });
+      await api(`/api/settings/users/${user.id}/access`, { method: "PATCH", body: JSON.stringify({ active: next.active, role: next.role, permissions: next.permissions }) });
       setNotice("Acessos atualizados no banco.");
     } catch (reason) { await loadUsers(); setError(reason instanceof Error ? reason.message : "Não foi possível atualizar os acessos."); }
   }
@@ -1272,23 +1410,23 @@ function SettingsPage({ currentUser }: { currentUser: User }) {
   }
 
   return <section className="page settings-page">
-    <div className="page-heading settings-heading"><div><span className="eyebrow">Administração</span><h1>Configurações</h1><p>Gerencie segurança, usuários, presença e acessos por área.</p></div></div>
+    <div className="page-heading settings-heading"><div><span className="eyebrow">Administração</span><h1>Configurações</h1><p>{canManageUsers ? "Gerencie segurança, funções, usuários, presença e acessos por área." : "Consulte a equipe e os acessos cadastrados. Alterações ficam protegidas pelo administrador mestre."}</p></div></div>
     {notice && <div className="notice success">{notice}</div>}{error && !modal && <div className="notice error">{error}</div>}
     <div className="settings-overview">
-      <div className="card security-card"><Avatar name={currentUser.name} imageUrl={currentUser.avatarUrl} /><div><span className="eyebrow">Minha conta</span><h2>{currentUser.name}</h2><p>{currentUser.email} · Administrador mestre</p></div><button className="outline" onClick={() => open({ kind: "password" })}><KeyRound size={16} /> Alterar minha senha</button></div>
+      <div className="card security-card"><Avatar name={currentUser.name} imageUrl={currentUser.avatarUrl} /><div><span className="eyebrow">Minha conta</span><h2>{currentUser.name}</h2><p>{currentUser.email} · {accessRoleLabel(currentUser.role)}</p></div><button className="outline" onClick={() => open({ kind: "password" })}><KeyRound size={16} /> Alterar minha senha</button></div>
       <div className="card access-summary"><span className="eyebrow">Equipe</span><strong>{users.filter((user) => user.active).length}</strong><p>usuários ativos</p><small>{users.length} contas cadastradas</small></div>
     </div>
     <div className="card online-team"><header><div><span className="eyebrow">Presença agora</span><h2>Equipe online</h2></div><strong>{users.filter((user) => user.online).length}</strong></header><div className="online-team-list">{users.filter((user) => user.online).map((user) => <button type="button" key={user.id} onClick={() => open({ kind: "profile", user })}><Avatar name={user.name} imageUrl={user.avatarUrl} size="sm" online /><span><strong>{user.name}</strong><small>{user.professionalRole ?? "Equipe Karrer"}{user.instagram ? ` · ${user.instagram}` : ""}</small></span></button>)}{!users.some((user) => user.online) && <p>Nenhum usuário online neste momento.</p>}</div></div>
-    <div className="card users-card"><div className="users-card-head"><div><h2>Usuários e permissões</h2><p>Somente você, como administrador mestre, pode alterar funções e acessos. As mudanças são validadas pela API.</p></div></div>
-      <div className="users-table users-table-head"><span>Usuário</span><span>Status</span>{accessLabels.map(({ key, label }) => <span key={key}>{label}</span>)}<span>Ações</span></div>
-      {users.map((user) => <div className={`users-table ${user.active ? "" : "disabled-user"}`} key={user.id}><button type="button" className="managed-person" onClick={() => open({ kind: "profile", user })} aria-label={`Ver informações de ${user.name}`}><Avatar name={user.name} imageUrl={user.avatarUrl} size="sm" /><span><strong>{user.name}{user.id === currentUser.id && <em>Você</em>}{!user.emailVerified && <em className="pending-verification">E-mail pendente</em>}</strong><small>{user.email}</small><small>{user.professionalRole ?? "Administrador"}{user.instagram ? ` · ${user.instagram}` : ""}</small></span></button><div className="presence-control"><span className={`presence-badge ${user.online ? "online" : ""}`}><i />{user.online ? "Online" : "Offline"}</span><Toggle checked={user.active} disabled={user.role === "admin"} label="Usuário ativo" onChange={(checked) => void updateAccess(user, { active: checked })} /></div>{accessLabels.map(({ key }) => <div key={key}><Toggle checked={user.permissions[key]} disabled={user.role === "admin" || !user.active} label={`Acesso a ${key}`} onChange={() => void updateAccess(user, { permission: key })} /></div>)}<div className="user-actions"><button title="Enviar redefinição de senha" disabled={!user.emailVerified} onClick={() => open({ kind: "email", user })}><Mail size={16} /></button><button className="danger-icon" title="Excluir usuário" disabled={user.role === "admin" || user.id === currentUser.id} onClick={() => open({ kind: "delete", user })}><Trash2 size={16} /></button></div></div>)}
+    <div className="card users-card"><div className="users-card-head"><div><h2>Usuários e permissões</h2><p>{canManageUsers ? "Somente você, como administrador mestre, pode alterar funções e acessos. As mudanças são validadas pela API." : "Você está em modo de consulta. Somente o administrador mestre pode alterar funções e acessos."}</p></div></div>
+      <div className="users-table users-table-head"><span>Usuário</span><span>Status</span><span>Função</span>{accessLabels.map(({ key, label }) => <span key={key}>{label}</span>)}<span>Ações</span></div>
+      {users.map((user) => <div className={`users-table ${user.active ? "" : "disabled-user"}`} key={user.id}><button type="button" className="managed-person" onClick={() => open({ kind: "profile", user })} aria-label={`Ver informações de ${user.name}`}><Avatar name={user.name} imageUrl={user.avatarUrl} size="sm" /><span><strong>{user.name}{user.id === currentUser.id && <em>Você</em>}{!user.emailVerified && <em className="pending-verification">E-mail pendente</em>}</strong><small>{user.email}</small><small>{user.professionalRole ?? "Equipe Karrer"}{user.instagram ? ` · ${user.instagram}` : ""}</small></span></button><div className="presence-control"><span className={`presence-badge ${user.online ? "online" : ""}`}><i />{user.online ? "Online" : "Offline"}</span><Toggle checked={user.active} disabled={!canManageUsers || user.role === "admin"} label="Usuário ativo" onChange={(checked) => void updateAccess(user, { active: checked })} /></div><div className="role-control">{user.role === "admin" ? <span className="role-pill">Mestre</span> : <select aria-label={`Função de ${user.name}`} value={user.role} disabled={!canManageUsers || user.id === currentUser.id} onChange={(event) => void updateAccess(user, { role: event.target.value as "manager" | "attendant" })}><option value="attendant">Equipe</option><option value="manager">Subadministrador</option></select>}</div>{accessLabels.map(({ key }) => <div key={key}><Toggle checked={user.permissions[key]} disabled={!canManageUsers || user.role === "admin" || !user.active} label={`Acesso a ${key}`} onChange={() => void updateAccess(user, { permission: key })} /></div>)}<div className="user-actions"><button title="Enviar redefinição de senha" disabled={!canManageUsers || !user.emailVerified} onClick={() => open({ kind: "email", user })}><Mail size={16} /></button><button className="danger-icon" title="Excluir usuário" disabled={!canManageUsers || user.role === "admin" || user.id === currentUser.id} onClick={() => open({ kind: "delete", user })}><Trash2 size={16} /></button></div></div>)}
       {!users.length && <Empty text="Nenhum usuário cadastrado." />}
     </div>
 
     {modal?.kind === "password" && <Modal title="Alterar minha senha" subtitle="As outras sessões abertas serão encerradas." onClose={() => setModal(null)}><form className="modal-form" onSubmit={changeOwnPassword}><Field label="Senha atual" name="currentPassword" type="password" required /><Field label="Nova senha" name="newPassword" type="password" minLength={10} required /><Field label="Confirmar nova senha" name="confirmation" type="password" minLength={10} required />{error && <p className="form-error">{error}</p>}<div className="modal-actions"><button type="button" className="outline" onClick={() => setModal(null)}>Cancelar</button><button className="primary" disabled={busy}>{busy ? "Salvando..." : "Alterar senha"}</button></div></form></Modal>}
     {modal?.kind === "delete" && modal.user && <Modal title="Excluir usuário?" subtitle={`O acesso de ${modal.user.name} será removido permanentemente.`} tone="danger" onClose={() => setModal(null)}>{error && <p className="form-error">{error}</p>}<div className="modal-actions"><button className="outline" onClick={() => setModal(null)}>Cancelar</button><button className="danger-button" disabled={busy} onClick={() => void removeUser()}>{busy ? "Excluindo..." : "Excluir usuário"}</button></div></Modal>}
     {modal?.kind === "email" && modal.user && <Modal title="Enviar redefinição?" subtitle={`Enviaremos um link seguro para ${modal.user.email}. O link expira em 30 minutos.`} onClose={() => setModal(null)}>{error && <p className="form-error">{error}</p>}<div className="modal-actions"><button className="outline" onClick={() => setModal(null)}>Cancelar</button><button className="primary" disabled={busy} onClick={() => void emailReset()}>{busy ? "Enviando..." : "Enviar e-mail"}</button></div></Modal>}
-    {modal?.kind === "profile" && modal.user && <Modal title="Informações do usuário" subtitle="Perfil, presença e acessos cadastrados no sistema." onClose={() => setModal(null)}><div className="user-profile-modal"><div className="user-profile-hero"><Avatar name={modal.user.name} imageUrl={modal.user.avatarUrl} online={modal.user.online} /><div><h3>{modal.user.name}</h3><p>{modal.user.professionalRole ?? (modal.user.role === "admin" ? "Administrador mestre" : "Equipe Karrer")}</p><span className={`profile-state ${modal.user.online ? "online" : ""}`}><i />{modal.user.online ? "Online agora" : modal.user.lastSeenAt ? `Visto por último ${new Date(modal.user.lastSeenAt).toLocaleString("pt-BR")}` : "Offline"}</span></div></div><dl className="user-profile-details"><div><dt>E-mail</dt><dd>{modal.user.email}</dd></div><div><dt>Instagram</dt><dd>{modal.user.instagram || "Não informado"}</dd></div><div><dt>Tipo de acesso</dt><dd>{modal.user.role === "admin" ? "Administrador mestre" : "Usuário da equipe"}</dd></div><div><dt>Conta</dt><dd>{modal.user.active ? "Ativa" : "Desativada"} · {modal.user.emailVerified ? "E-mail confirmado" : "E-mail pendente"}</dd></div><div><dt>Cadastrado em</dt><dd>{new Date(modal.user.createdAt).toLocaleString("pt-BR")}</dd></div></dl><div className="user-profile-permissions"><span>Acessos liberados</span><div>{accessLabels.map(({ key, label }) => <em className={modal.user!.permissions[key] ? "allowed" : ""} key={key}>{label}</em>)}</div><small>{modal.user.role === "admin" ? "O administrador mestre possui acesso completo e protegido." : "As permissões só podem ser alteradas por você, administrador mestre."}</small></div></div></Modal>}
+    {modal?.kind === "profile" && modal.user && <Modal title="Informações do usuário" subtitle="Perfil, presença e acessos cadastrados no sistema." onClose={() => setModal(null)}><div className="user-profile-modal"><div className="user-profile-hero"><Avatar name={modal.user.name} imageUrl={modal.user.avatarUrl} online={modal.user.online} /><div><h3>{modal.user.name}</h3><p>{modal.user.professionalRole ?? accessRoleLabel(modal.user.role)}</p><span className={`profile-state ${modal.user.online ? "online" : ""}`}><i />{modal.user.online ? "Online agora" : modal.user.lastSeenAt ? `Visto por último ${new Date(modal.user.lastSeenAt).toLocaleString("pt-BR")}` : "Offline"}</span></div></div><dl className="user-profile-details"><div><dt>E-mail</dt><dd>{modal.user.email}</dd></div><div><dt>Instagram</dt><dd>{modal.user.instagram || "Não informado"}</dd></div><div><dt>Tipo de acesso</dt><dd>{accessRoleLabel(modal.user.role)}</dd></div><div><dt>Conta</dt><dd>{modal.user.active ? "Ativa" : "Desativada"} · {modal.user.emailVerified ? "E-mail confirmado" : "E-mail pendente"}</dd></div><div><dt>Cadastrado em</dt><dd>{new Date(modal.user.createdAt).toLocaleString("pt-BR")}</dd></div></dl><div className="user-profile-permissions"><span>Acessos liberados</span><div>{accessLabels.map(({ key, label }) => <em className={modal.user!.permissions[key] ? "allowed" : ""} key={key}>{label}</em>)}</div><small>{modal.user.role === "admin" ? "O administrador mestre possui acesso completo e protegido." : modal.user.role === "manager" ? "O subadministrador não possui acesso a Configurações, mas pode atuar no Chat conforme a permissão liberada." : "As permissões só podem ser alteradas por você, administrador mestre."}</small></div></div></Modal>}
   </section>;
 }
 
@@ -1343,7 +1481,10 @@ function formatWaitingTime(waitingSince: string, now: number): string {
   return rest ? `${hours}h ${rest}min` : `${hours}h`;
 }
 
-function ConversationRow({ conversation, active, now, onClick }: { conversation: Conversation; active: boolean; now: number; onClick: () => void }) { return <button className={`conversation-row ${active ? "active" : ""}`} onClick={onClick}><Avatar name={conversation.name} imageUrl={conversation.avatarUrl} online={conversation.online} size="sm" /><span><strong>{conversation.name}</strong><small>{conversation.lastMessageType === "audio" ? "Áudio" : conversation.lastMessage ?? conversation.stage}</small><span className="conversation-meta"><em className={`conversation-service-status ${conversation.serviceStatus}`}>{serviceStatusLabel[conversation.serviceStatus]}</em>{conversation.lunaAutonomousEnabled && <em className="conversation-luna"><Bot size={11} />Luna ativa</em>}{conversation.waitingSince && <em className="conversation-waiting"><Clock3 size={11} />Aguardando há {formatWaitingTime(conversation.waitingSince, now)}</em>}{conversation.assigneeName && <em className="conversation-assignee"><i />{conversation.assigneeName} atendendo</em>}</span></span><time>{formatTime(conversation.lastMessageAt)}{conversation.unreadCount > 0 && <b aria-label={`${conversation.unreadCount} ${conversation.unreadCount === 1 ? "mensagem não lida" : "mensagens não lidas"}`}>{conversation.unreadCount}</b>}</time></button>; }
+function ConversationRow({ conversation, active, now, onClick }: { conversation: Conversation; active: boolean; now: number; onClick: () => void }) {
+  const displayName = conversationDisplayName(conversation);
+  return <button className={`conversation-row ${active ? "active" : ""}`} onClick={onClick}><Avatar name={displayName} imageUrl={conversation.avatarUrl} online={conversation.online} size="sm" /><span><strong>{displayName}</strong><small>{conversation.lastMessageType === "audio" ? "Áudio" : conversation.lastMessage ?? conversation.stage}</small><span className="conversation-meta"><em className={`conversation-service-status ${conversation.serviceStatus}`}>{serviceStatusLabel[conversation.serviceStatus]}</em>{conversation.lunaAutonomousEnabled && <em className="conversation-luna"><Bot size={11} />Luna ativa</em>}{conversation.waitingSince && <em className="conversation-waiting"><Clock3 size={11} />Aguardando há {formatWaitingTime(conversation.waitingSince, now)}</em>}{conversation.assigneeName && <em className="conversation-assignee"><i />{conversation.assigneeName} atendendo</em>}</span></span><time>{formatTime(conversation.lastMessageAt)}{conversation.unreadCount > 0 && <b aria-label={`${conversation.unreadCount} ${conversation.unreadCount === 1 ? "mensagem não lida" : "mensagens não lidas"}`}>{conversation.unreadCount}</b>}</time></button>;
+}
 function Brand() { return <div className="brand"><img src="/karrer-logo.png" alt="Karrer & Advogados" /></div>; }
 function Avatar({ name, imageUrl, online, size = "md" }: { name: string | null; imageUrl?: string | null; online?: boolean; size?: "xs" | "sm" | "md" }) { const [failed, setFailed] = useState(false); useEffect(() => setFailed(false), [imageUrl]); return <div className={`avatar ${size}`}>{imageUrl && !failed ? <img src={imageUrl} alt={`Foto de ${name ?? "usuário"}`} loading="lazy" onError={() => setFailed(true)} /> : initials(name)}{online && <i />}</div>; }
 function ClassificationBadge({ value }: { value: Classification }) { return <span className={`badge ${value}`}>Lead {classificationLabel[value].toLowerCase()}</span>; }
@@ -1370,7 +1511,7 @@ function CompactSelect({ className, label, value, options, disabled, icon, onCha
 }
 function SearchBox({ value, onChange, placeholder }: { value: string; onChange: (value: string) => void; placeholder: string }) { return <label className="search-box"><Search size={16} /><input value={value} onChange={(event) => onChange(event.target.value)} placeholder={placeholder} /></label>; }
 function Chip({ active, onClick, children }: { active: boolean; onClick: () => void; children: React.ReactNode }) { return <button className={`chip ${active ? "active" : ""}`} onClick={onClick}>{children}</button>; }
-function Kpi({ label, value, detail, dark, tone }: { label: string; value: number; detail: string; dark?: boolean; tone?: Classification }) { return <div className={`kpi ${dark ? "dark" : ""} ${tone ?? ""}`}><span>{label}</span><strong>{value}</strong><small>{detail}</small></div>; }
+function Kpi({ label, value, detail, dark, tone }: { label: string; value: string | number; detail: string; dark?: boolean; tone?: Classification }) { return <div className={`kpi ${dark ? "dark" : ""} ${tone ?? ""}`}><span>{label}</span><strong>{value}</strong><small>{detail}</small></div>; }
 function Field(props: React.InputHTMLAttributes<HTMLInputElement> & { label: string }) { const { label, ...input } = props; return <label>{label}<input {...input} /></label>; }
 function Empty({ text, large, dark }: { text: string; large?: boolean; dark?: boolean }) { return <div className={`empty ${large ? "large" : ""} ${dark ? "dark" : ""}`}><MessageCircle /><p>{text}</p></div>; }
 

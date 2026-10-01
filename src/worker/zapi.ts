@@ -1,4 +1,4 @@
-import { HttpError, cleanText, normalizePhone } from "./http";
+import { HttpError, cleanText, json, normalizePhone } from "./http";
 import { assertSameWhatsAppRecipient, isZApiLid, normalizeZApiRecipient } from "./recipient-safety";
 import type { AppEnv, ZApiPayload } from "./types";
 
@@ -7,6 +7,42 @@ export type ZApiMessageStatus = "sent" | "delivered" | "read" | "failed";
 interface ZApiPhoneLookup {
   exists?: boolean;
   phone?: string;
+}
+
+const ZAPI_REQUEST_TIMEOUT_MS = 15_000;
+
+type ZApiLogOutcome = "accepted" | "provider_rejected" | "timeout" | "network_error";
+
+async function recordZApiDelivery(env: AppEnv, operation: string, httpStatus: number | null, outcome: ZApiLogOutcome,
+  errorCode: string | null, latencyMs: number): Promise<void> {
+  try {
+    await env.DB?.prepare(`INSERT INTO zapi_delivery_logs
+      (id, operation, http_status, outcome, error_code, latency_ms)
+      VALUES (?1, ?2, ?3, ?4, ?5, ?6)`)
+      .bind(crypto.randomUUID(), operation, httpStatus, outcome, errorCode, Math.max(0, Math.round(latencyMs))).run();
+  } catch {
+    // Delivery logging must never turn a successful provider call into a failed send.
+  }
+}
+
+async function fetchZApi(env: AppEnv, operation: string, input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
+  const startedAt = Date.now();
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), ZAPI_REQUEST_TIMEOUT_MS);
+  try {
+    const response = await fetch(input, { ...init, signal: controller.signal });
+    await recordZApiDelivery(env, operation, response.status, response.ok ? "accepted" : "provider_rejected",
+      response.ok ? null : `HTTP_${response.status}`, Date.now() - startedAt);
+    return response;
+  } catch (reason) {
+    const timedOut = reason instanceof DOMException && reason.name === "AbortError";
+    await recordZApiDelivery(env, operation, null, timedOut ? "timeout" : "network_error",
+      timedOut ? "TIMEOUT" : "NETWORK_ERROR", Date.now() - startedAt);
+    if (timedOut) throw new HttpError("A Z-API nÃ£o respondeu dentro do prazo de seguranÃ§a.", 504);
+    throw new HttpError("NÃ£o foi possÃ­vel alcanÃ§ar a Z-API.", 502);
+  } finally {
+    clearTimeout(timeout);
+  }
 }
 
 function providerMessageId(value: unknown): string | null {
@@ -19,8 +55,8 @@ function providerMessageId(value: unknown): string | null {
   return null;
 }
 
-function postText(endpoint: string, clientToken: string, phone: string, message: string): Promise<Response> {
-  return fetch(endpoint, {
+function postText(env: AppEnv, endpoint: string, clientToken: string, phone: string, message: string): Promise<Response> {
+  return fetchZApi(env, "send_text", endpoint, {
     method: "POST",
     headers: { "Client-Token": clientToken, "Content-Type": "application/json" },
     body: JSON.stringify({ phone, message }),
@@ -54,9 +90,9 @@ export async function sendTextDetailed(env: AppEnv, phone: string, message: stri
   }
   const baseUrl = `https://api.z-api.io/instances/${encodeURIComponent(env.ZAPI_INSTANCE_ID)}/token/${encodeURIComponent(env.ZAPI_INSTANCE_TOKEN)}`;
   let recipientPhone = normalizedPhone;
-  let response = await postText(`${baseUrl}/send-text`, env.ZAPI_CLIENT_TOKEN, normalizedPhone, message);
+  let response = await postText(env, `${baseUrl}/send-text`, env.ZAPI_CLIENT_TOKEN, normalizedPhone, message);
   if (response.status === 400 && !isZApiLid(normalizedPhone)) {
-    const lookupResponse = await fetch(`${baseUrl}/phone-exists/${encodeURIComponent(normalizedPhone)}`, {
+    const lookupResponse = await fetchZApi(env, "phone_exists", `${baseUrl}/phone-exists/${encodeURIComponent(normalizedPhone)}`, {
       headers: { "Client-Token": env.ZAPI_CLIENT_TOKEN },
     });
     if (lookupResponse.ok) {
@@ -64,7 +100,7 @@ export async function sendTextDetailed(env: AppEnv, phone: string, message: stri
       const lookup = Array.isArray(lookupResult) ? lookupResult[0] : lookupResult;
       const canonicalPhone = lookup?.exists && lookup.phone ? assertSameWhatsAppRecipient(normalizedPhone, lookup.phone) : normalizedPhone;
       if (canonicalPhone !== normalizedPhone) {
-        response = await postText(`${baseUrl}/send-text`, env.ZAPI_CLIENT_TOKEN, canonicalPhone, message);
+        response = await postText(env, `${baseUrl}/send-text`, env.ZAPI_CLIENT_TOKEN, canonicalPhone, message);
         recipientPhone = canonicalPhone;
       }
     }
@@ -95,7 +131,7 @@ export async function sendMedia(env: AppEnv, phone: string, kind: "image" | "aud
     : kind === "audio"
       ? { phone: normalizedPhone, audio: dataUrl, waveform: true }
       : { phone: normalizedPhone, document: dataUrl, ...(fileName ? { fileName } : {}), ...(caption ? { caption } : {}) };
-  const response = await fetch(endpoint, {
+  const response = await fetchZApi(env, "send_media", endpoint, {
     method: "POST",
     headers: { "Client-Token": env.ZAPI_CLIENT_TOKEN, "Content-Type": "application/json" },
     body: JSON.stringify(payload),
@@ -118,7 +154,7 @@ export async function editTextMessage(env: AppEnv, phone: string, messageId: str
   }
   const recipient = messageMutationPhone(phone);
   const endpoint = `https://api.z-api.io/instances/${encodeURIComponent(env.ZAPI_INSTANCE_ID)}/token/${encodeURIComponent(env.ZAPI_INSTANCE_TOKEN)}/send-text`;
-  const response = await fetch(endpoint, {
+  const response = await fetchZApi(env, "edit_text", endpoint, {
     method: "POST",
     headers: { "Client-Token": env.ZAPI_CLIENT_TOKEN, "Content-Type": "application/json" },
     body: JSON.stringify({ phone: recipient, message, editMessageId: messageId }),
@@ -136,7 +172,7 @@ export async function deleteMessageForEveryone(env: AppEnv, phone: string, messa
   endpoint.searchParams.set("messageId", messageId);
   endpoint.searchParams.set("phone", recipient);
   endpoint.searchParams.set("owner", "true");
-  const response = await fetch(endpoint, { method: "DELETE", headers: { "Client-Token": env.ZAPI_CLIENT_TOKEN } });
+  const response = await fetchZApi(env, "delete_message", endpoint, { method: "DELETE", headers: { "Client-Token": env.ZAPI_CLIENT_TOKEN } });
   if (!response.ok) throw new HttpError("A Z-API recusou apagar a mensagem para todos.", 502);
   if (response.status === 204) return;
   const result: unknown = await response.json().catch(() => null);
@@ -145,11 +181,54 @@ export async function deleteMessageForEveryone(env: AppEnv, phone: string, messa
   }
 }
 
+export async function getZApiHealth(env: AppEnv): Promise<Response> {
+  if (!env.ZAPI_INSTANCE_ID || !env.ZAPI_INSTANCE_TOKEN || !env.ZAPI_CLIENT_TOKEN) {
+    throw new HttpError("IntegraÃ§Ã£o Z-API ainda nÃ£o configurada.", 503);
+  }
+  const baseUrl = `https://api.z-api.io/instances/${encodeURIComponent(env.ZAPI_INSTANCE_ID)}/token/${encodeURIComponent(env.ZAPI_INSTANCE_TOKEN)}`;
+  const checkedAt = new Date().toISOString();
+  let statusCode: number | null = null;
+  let connected = false;
+  let smartphoneConnected = false;
+  let errorCode: string | null = null;
+  try {
+    const response = await fetchZApi(env, "status", `${baseUrl}/status`, { headers: { "Client-Token": env.ZAPI_CLIENT_TOKEN } });
+    statusCode = response.status;
+    const payload = await response.json().catch(() => null) as { connected?: unknown; smartphoneConnected?: unknown } | null;
+    connected = payload?.connected === true;
+    smartphoneConnected = payload?.smartphoneConnected === true;
+    if (!response.ok) errorCode = `HTTP_${response.status}`;
+  } catch (reason) {
+    errorCode = reason instanceof HttpError && reason.status === 504 ? "TIMEOUT" : "NETWORK_ERROR";
+  }
+  const metrics = await env.DB.prepare(`SELECT
+      COUNT(*) AS total,
+      SUM(CASE WHEN outcome = 'accepted' THEN 1 ELSE 0 END) AS accepted,
+      SUM(CASE WHEN outcome IN ('provider_rejected', 'timeout', 'network_error') THEN 1 ELSE 0 END) AS failures,
+      SUM(CASE WHEN outcome = 'timeout' THEN 1 ELSE 0 END) AS timeouts
+    FROM zapi_delivery_logs WHERE created_at >= datetime('now', '-24 hours')`)
+    .first<{ total: number; accepted: number; failures: number; timeouts: number }>();
+  return json({
+    ok: connected && smartphoneConnected,
+    checkedAt,
+    connected,
+    smartphoneConnected,
+    statusCode,
+    errorCode,
+    last24h: {
+      requests: Number(metrics?.total ?? 0),
+      accepted: Number(metrics?.accepted ?? 0),
+      failures: Number(metrics?.failures ?? 0),
+      timeouts: Number(metrics?.timeouts ?? 0),
+    },
+  }, { status: connected && smartphoneConnected ? 200 : 503 });
+}
+
 export async function fetchContactProfilePicture(env: AppEnv, phone: string): Promise<{ body: ArrayBuffer; mime: string } | null> {
   if (isZApiLid(phone)) return null;
   if (!env.ZAPI_INSTANCE_ID || !env.ZAPI_INSTANCE_TOKEN || !env.ZAPI_CLIENT_TOKEN) return null;
   const baseUrl = `https://api.z-api.io/instances/${encodeURIComponent(env.ZAPI_INSTANCE_ID)}/token/${encodeURIComponent(env.ZAPI_INSTANCE_TOKEN)}`;
-  const metadata = await fetch(`${baseUrl}/profile-picture?phone=${encodeURIComponent(normalizePhone(phone))}`, {
+  const metadata = await fetchZApi(env, "profile_picture", `${baseUrl}/profile-picture?phone=${encodeURIComponent(normalizePhone(phone))}`, {
     headers: { "Client-Token": env.ZAPI_CLIENT_TOKEN },
   });
   if (!metadata.ok) return null;
@@ -157,7 +236,7 @@ export async function fetchContactProfilePicture(env: AppEnv, phone: string): Pr
   if (!result.link) return null;
   const url = new URL(result.link);
   if (url.protocol !== "https:") return null;
-  const image = await fetch(url, { redirect: "follow" });
+  const image = await fetchZApi(env, "profile_picture_media", url, { redirect: "follow" });
   if (!image.ok) return null;
   const mime = image.headers.get("content-type")?.split(";", 1)[0]?.trim().toLowerCase() ?? "";
   if (!mime.startsWith("image/")) return null;
@@ -171,7 +250,7 @@ export async function fetchContactProfilePicture(env: AppEnv, phone: string): Pr
 export function normalizeIncoming(payload: ZApiPayload): {
   phone: string;
   chatLid: string | null;
-  name: string;
+  name: string | null;
   zapiMessageId: string;
   createdAt: string;
   direction: "inbound" | "outbound";
@@ -190,7 +269,8 @@ export function normalizeIncoming(payload: ZApiPayload): {
     : isZApiLid(payload.chatLid) ? payload.chatLid.trim() : null;
   if (payload.chatLid && !chatLid) throw new HttpError("LID Z-API inválido.", 422);
   if (isZApiLid(phone) && chatLid && phone !== chatLid) throw new HttpError("Identificadores Z-API divergentes.", 422);
-  const name = cleanText(payload.senderName ?? payload.chatName, 120) ?? phone;
+  const suppliedName = cleanText(payload.senderName ?? payload.chatName, 120);
+  const name = suppliedName && !isZApiLid(suppliedName) && suppliedName !== phone && suppliedName !== chatLid ? suppliedName : null;
   const common = {
     phone,
     chatLid,
@@ -210,7 +290,7 @@ export function normalizeIncoming(payload: ZApiPayload): {
 export async function storeRemoteMedia(env: AppEnv, mediaUrl: string, key: string, mime: string | null): Promise<void> {
   const url = new URL(mediaUrl);
   if (url.protocol !== "https:") throw new HttpError("URL de mídia insegura.", 422);
-  const response = await fetch(url, { redirect: "follow" });
+  const response = await fetchZApi(env, "receive_media", url, { redirect: "follow" });
   if (!response.ok || !response.body) throw new HttpError("Não foi possível copiar a mídia recebida.", 502);
   await env.MEDIA.put(key, response.body, { httpMetadata: { contentType: mime ?? response.headers.get("content-type") ?? "application/octet-stream" } });
 }

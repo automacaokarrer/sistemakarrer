@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { requireAdmin, requireAnyPermission, requirePermission } from "./auth";
+import { requireAdmin, requireAnyPermission, requirePermission, requireSettings } from "./auth";
 import { HttpError } from "./http";
 import type { SessionUser } from "./types";
 
@@ -27,5 +27,11 @@ describe("autorização por módulo", () => {
   it("reserva a gestão de usuários ao administrador", () => {
     expect(() => requireAdmin(user)).toThrow(HttpError);
     expect(() => requireAdmin({ ...user, role: "admin" })).not.toThrow();
+  });
+
+  it("reserva as configurações ao administrador mestre", () => {
+    expect(() => requireSettings(user)).toThrow(HttpError);
+    expect(() => requireSettings({ ...user, role: "manager" })).toThrow(HttpError);
+    expect(() => requireSettings({ ...user, role: "admin" })).not.toThrow();
   });
 });

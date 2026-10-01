@@ -9,7 +9,7 @@ vi.mock("./auth", () => ({ safeEqual: async () => true }));
 
 function testEnvironment() {
   const sqlite = new DatabaseSync(":memory:");
-  for (const file of ["0001_initial.sql", "0006_conversation_waiting.sql", "0014_message_actions.sql"]) {
+  for (const file of ["0001_initial.sql", "0006_conversation_waiting.sql", "0014_message_actions.sql", "0021_zapi_delivery_controls.sql"]) {
     sqlite.exec(readFileSync(join(process.cwd(), "migrations", file), "utf8"));
   }
   const events: Array<{ room: string; event: Record<string, unknown> }> = [];
@@ -36,7 +36,7 @@ function testEnvironment() {
 
 describe("identidade do destinatário Z-API", () => {
   it("preserva LID recebido e vincula o número real posterior à mesma conversa", async () => {
-    const { sqlite, callback } = testEnvironment();
+    const { sqlite, callback, events } = testEnvironment();
     try {
       const lid = "65998849469@lid";
       expect((await callback({ messageId: "in-1", phone: lid, chatLid: lid, text: { message: "Olá" } })).status).toBe(201);
@@ -46,6 +46,21 @@ describe("identidade do destinatário Z-API", () => {
       expect(sqlite.prepare("SELECT phone, chat_lid FROM contacts").get()).toEqual({ phone: "5592984078295", chat_lid: lid });
       expect(sqlite.prepare("SELECT COUNT(*) AS total FROM contacts").get()).toEqual({ total: 1 });
       expect(sqlite.prepare("SELECT COUNT(*) AS total FROM conversations").get()).toEqual({ total: 1 });
+      expect(events).toContainEqual(expect.objectContaining({ room: "__inbox__", event: expect.objectContaining({ type: "message.incoming" }) }));
+    } finally { sqlite.close(); }
+  });
+
+  it("substitui um nome ausente pelo nome real recebido depois", async () => {
+    const { sqlite, callback } = testEnvironment();
+    try {
+      const lid = "273529975083158@lid";
+      await callback({ messageId: "name-1", phone: lid, chatLid: lid, text: { message: "Olá" } });
+      expect(sqlite.prepare("SELECT name FROM contacts").get()).toEqual({ name: null });
+
+      await callback({ messageId: "name-2", phone: "554396716088", chatLid: lid, senderName: "Paulo Oliveira", text: { message: "Meu nome é Paulo" } });
+      expect(sqlite.prepare("SELECT name, phone, chat_lid FROM contacts").get()).toEqual({
+        name: "Paulo Oliveira", phone: "554396716088", chat_lid: lid,
+      });
     } finally { sqlite.close(); }
   });
 

@@ -53,6 +53,18 @@ describe("webhook Z-API", () => {
     });
   });
 
+  it("não usa LID como nome quando a Z-API não entrega um nome real", () => {
+    const message = normalizeIncoming({
+      messageId: "za-lid-name",
+      phone: "273529975083158@lid",
+      chatLid: "273529975083158@lid",
+      senderName: "273529975083158@lid",
+      text: { message: "Olá" },
+    });
+
+    expect(message.name).toBeNull();
+  });
+
   it("ignora grupos", () => {
     expect(() => normalizeIncoming({ isGroup: true, phone: "5592999990000" })).toThrow(HttpError);
   });

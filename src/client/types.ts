@@ -134,3 +134,42 @@ export interface LeadSummary {
   averageFirstResponseMinutes: number | null;
   daily: Array<{ day: string; total: number }>;
 }
+
+export type ActivityPageKey = "chat" | "leads" | "lead" | "clients" | "settings" | "activity";
+
+export interface ActivityUserSummary {
+  id: string;
+  name: string;
+  role: string;
+  loginCount: number;
+  totalSeconds: number;
+  firstLoginAt: string | null;
+  lastLoginAt: string | null;
+  online: boolean;
+  lastSeenAt: string | null;
+  pageSeconds: Record<ActivityPageKey, number>;
+}
+
+export interface ActivitySession {
+  id: string;
+  userId: string;
+  userName: string;
+  startedAt: string;
+  endedAt: string | null;
+  lastSeenAt: string;
+  lastPage: string | null;
+  durationSeconds: number;
+  active: boolean;
+  pages: Array<{ page: ActivityPageKey; label: string; startedAt: string; endedAt: string | null; seconds: number; active: boolean }>;
+}
+
+export interface ActivityDailySummary {
+  sessionId: string;
+  day: string;
+  userId: string;
+  userName: string;
+  startedAt: string;
+  endedAt: string;
+  seconds: number;
+  active: boolean;
+}

@@ -62,6 +62,7 @@ async function mockDashboard(
       { id: "user-2", name: "João Lima", avatarUrl: null, online: false, activeCount: 1, waitingCount: 0 },
       { id: "user-3", name: "Lia Costa", avatarUrl: null, online: false, activeCount: 0, waitingCount: 0 },
     ] };
+    else if (path === "/api/chat/attendants") body = { attendants: users.filter((member) => member.active && member.permissions.chat).map(({ id, name }) => ({ id, name })) };
     else if (path === "/api/link-preview") body = {
       url: requestUrl.searchParams.get("url"), title: "Documento compartilhado", description: "Confira o documento enviado pelo cliente.", siteName: "Adobe Acrobat",
     };
@@ -238,6 +239,10 @@ test("painel principal abre todos os módulos autorizados", async ({ page }, tes
   await expect(page.getByRole("dialog", { name: "Informações do usuário" }).getByText("@joaolima", { exact: true })).toBeVisible();
   await expect(page.getByText("As permissões só podem ser alteradas por você, administrador mestre.")).toBeVisible();
   await page.getByRole("button", { name: "Fechar" }).click();
+  const roleSelect = page.getByRole("combobox", { name: "Função de João Lima" });
+  await expect(roleSelect).toHaveValue("attendant");
+  await roleSelect.selectOption("manager");
+  await expect(roleSelect).toHaveValue("manager");
   await expectNoHorizontalOverflow(page);
 });
 
