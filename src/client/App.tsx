@@ -215,20 +215,30 @@ function Dashboard({ user, googleDrive, onLogout }: { user: User; googleDrive: b
   const [loading, setLoading] = useState(user.permissions.chat || user.permissions.leads);
   const conversationsLoaded = useRef(false);
   const reloadSequence = useRef(0);
+  const reloadInFlight = useRef<Promise<void> | null>(null);
 
-  const reloadConversations = useCallback(async () => {
-    const sequence = ++reloadSequence.current;
-    if (!conversationsLoaded.current) setLoading(true);
-    try {
-      const conversationData = await api<{ conversations: Conversation[] }>("/api/conversations");
-      if (sequence === reloadSequence.current) {
-        setConversations(conversationData.conversations);
-        setSelectedId((current) => current && conversationData.conversations.some((conversation) => conversation.id === current) ? current : null);
+  const reloadConversations = useCallback(() => {
+    if (reloadInFlight.current) return reloadInFlight.current;
+    const request = (async () => {
+      const sequence = ++reloadSequence.current;
+      if (!conversationsLoaded.current) setLoading(true);
+      try {
+        const conversationData = await api<{ conversations: Conversation[] }>("/api/conversations");
+        if (sequence === reloadSequence.current) {
+          conversationsLoaded.current = true;
+          setConversations(conversationData.conversations);
+          setSelectedId((current) => current && conversationData.conversations.some((conversation) => conversation.id === current) ? current : null);
+        }
+      } finally {
+        setLoading(false);
       }
-    } finally {
-      conversationsLoaded.current = true;
-      setLoading(false);
-    }
+    })();
+    reloadInFlight.current = request;
+    request.then(
+      () => { if (reloadInFlight.current === request) reloadInFlight.current = null; },
+      () => { if (reloadInFlight.current === request) reloadInFlight.current = null; },
+    );
+    return request;
   }, []);
 
   const loadContacts = useCallback(async () => {
@@ -271,7 +281,7 @@ function Dashboard({ user, googleDrive, onLogout }: { user: User; googleDrive: b
       const protocol = location.protocol === "https:" ? "wss:" : "ws:";
       socket = new WebSocket(`${protocol}//${location.host}/api/conversations/ws`);
       socket.onopen = () => {
-        void reloadConversations().catch(() => undefined);
+        if (!conversationsLoaded.current) void reloadConversations().catch(() => undefined);
         clearHeartbeat();
         heartbeatTimer = window.setInterval(() => {
           if (socket?.readyState !== WebSocket.OPEN) return;

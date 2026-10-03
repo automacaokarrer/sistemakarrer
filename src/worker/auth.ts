@@ -34,7 +34,7 @@ async function passwordHash(password: string, salt: Uint8Array, iterations = ITE
   return bytesToBase64(new Uint8Array(bits));
 }
 
-type UserRow = Omit<SessionUser, "permissions"> & {
+type UserRow = Omit<SessionUser, "permissions" | "avatarUrl"> & {
   avatarKey: string | null;
   canChat: number;
   canLeads: number;
@@ -127,10 +127,43 @@ async function createSession(userId: string, env: AppEnv): Promise<{ cookie: str
 }
 
 export async function authStatus(request: Request, env: AppEnv) {
-  const count = await env.DB.prepare("SELECT COUNT(*) AS total FROM users").first<{ total: number }>();
+  const token = cookieValue(request, SESSION_COOKIE);
+  const tokenHash = token ? await digest(token) : null;
+  const row = await env.DB.prepare(`
+    SELECT account.userCount,
+      u.id, u.name, u.email, u.role, u.avatar_key AS avatarKey, u.professional_role AS professionalRole,
+      u.can_chat AS canChat, u.can_leads AS canLeads, u.can_clients AS canClients, u.can_settings AS canSettings
+    FROM (SELECT COUNT(*) AS userCount FROM users) account
+    LEFT JOIN sessions s ON s.token_hash = ?1 AND s.expires_at > ?2
+    LEFT JOIN users u ON u.id = s.user_id AND u.active = 1 AND u.email_verified = 1
+  `).bind(tokenHash, new Date().toISOString()).first<{
+    userCount: number;
+    id: string | null;
+    name: string | null;
+    email: string | null;
+    role: SessionUser["role"] | null;
+    avatarKey: string | null;
+    professionalRole: string | null;
+    canChat: number | null;
+    canLeads: number | null;
+    canClients: number | null;
+    canSettings: number | null;
+  }>();
+  const user = row?.id ? sessionUser({
+    id: row.id,
+    name: row.name!,
+    email: row.email!,
+    role: row.role!,
+    avatarKey: row.avatarKey,
+    professionalRole: row.professionalRole,
+    canChat: row.canChat ?? 0,
+    canLeads: row.canLeads ?? 0,
+    canClients: row.canClients ?? 0,
+    canSettings: row.canSettings ?? 0,
+  }) : null;
   return {
-    setupRequired: Number(count?.total ?? 0) === 0,
-    user: await currentUser(request, env),
+    setupRequired: Number(row?.userCount ?? 0) === 0,
+    user,
     features: { googleDrive: Boolean(env.GOOGLE_SERVICE_ACCOUNT_EMAIL && env.GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY && env.GOOGLE_DRIVE_FOLDER_ID) },
   };
 }

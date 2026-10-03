@@ -41,12 +41,22 @@ export function TeamChat({ user, open, onClose, onCounts }: {
   const inputRef = useRef<HTMLInputElement>(null);
   const endRef = useRef<HTMLDivElement>(null);
   const openRef = useRef(open);
+  const summaryInFlight = useRef<Promise<void> | null>(null);
   openRef.current = open;
 
-  const refreshSummary = useCallback(async () => {
-    const result = await api<Summary>("/api/team-chat/summary");
-    setMembers(result.members);
-    onCounts(result.unreadCount, result.mentionCount);
+  const refreshSummary = useCallback(() => {
+    if (summaryInFlight.current) return summaryInFlight.current;
+    const request = (async () => {
+      const result = await api<Summary>("/api/team-chat/summary");
+      setMembers(result.members);
+      onCounts(result.unreadCount, result.mentionCount);
+    })();
+    summaryInFlight.current = request;
+    request.then(
+      () => { if (summaryInFlight.current === request) summaryInFlight.current = null; },
+      () => { if (summaryInFlight.current === request) summaryInFlight.current = null; },
+    );
+    return request;
   }, [onCounts]);
 
   const markRead = useCallback(async (id: number) => {
@@ -71,7 +81,7 @@ export function TeamChat({ user, open, onClose, onCounts }: {
   useEffect(() => {
     void refreshSummary().catch(() => undefined);
     const refresh = () => { if (document.visibilityState === "visible") void refreshSummary().catch(() => undefined); };
-    const timer = window.setInterval(refresh, 30_000);
+    const timer = window.setInterval(refresh, 60_000);
     document.addEventListener("visibilitychange", refresh);
     return () => { window.clearInterval(timer); document.removeEventListener("visibilitychange", refresh); };
   }, [refreshSummary]);
